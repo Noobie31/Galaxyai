@@ -5,17 +5,7 @@ import { useReactFlow, useViewport, Panel } from "@xyflow/react"
 import { useWorkflowStore } from "@/store/workflowStore"
 import { useHistoryStore } from "@/store/historyStore"
 import { useExecutionStore } from "@/store/executionStore"
-import {
-  MousePointer2,
-  Hand,
-  Undo2,
-  Redo2,
-  Play,
-  Save,
-  Upload,
-  Download,
-  ArrowLeft,
-} from "lucide-react"
+import { MousePointer2, Hand, Undo2, Redo2, Play, Save, FolderOpen, Share2, ArrowLeft } from "lucide-react"
 import { useRouter } from "next/navigation"
 
 export default function CanvasToolbar() {
@@ -23,16 +13,7 @@ export default function CanvasToolbar() {
   const { zoomIn, zoomOut, fitView } = useReactFlow()
   const { zoom } = useViewport()
   const [tool, setTool] = useState<"select" | "pan">("select")
-  const {
-    nodes,
-    edges,
-    workflowName,
-    setWorkflowName,
-    workflowId,
-    isSaving,
-    setIsSaving,
-    setLastSaved,
-  } = useWorkflowStore()
+  const { nodes, edges, workflowName, setWorkflowName, workflowId, isSaving, setIsSaving, setLastSaved } = useWorkflowStore()
   const { undo, redo } = useHistoryStore()
   const { isRunning } = useExecutionStore()
   const [isEditingName, setIsEditingName] = useState(false)
@@ -60,11 +41,7 @@ export default function CanvasToolbar() {
       await fetch(`/api/workflows/${state.workflowId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: state.workflowName,
-          nodes: state.nodes,
-          edges: state.edges,
-        }),
+        body: JSON.stringify({ name: state.workflowName, nodes: state.nodes, edges: state.edges }),
       })
       setLastSaved(new Date())
     } finally {
@@ -72,18 +49,7 @@ export default function CanvasToolbar() {
     }
   }
 
-  const handleExport = () => {
-    const data = JSON.stringify({ nodes, edges }, null, 2)
-    const blob = new Blob([data], { type: "application/json" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = `${workflowName}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  const handleImport = () => {
+  const handleOpen = () => {
     const input = document.createElement("input")
     input.type = "file"
     input.accept = ".json"
@@ -98,13 +64,16 @@ export default function CanvasToolbar() {
             useWorkflowStore.getState().setNodes(data.nodes)
             useWorkflowStore.getState().setEdges(data.edges)
           }
-        } catch (err) {
-          console.error("Invalid JSON file")
-        }
+        } catch {}
       }
       reader.readAsText(file)
     }
     input.click()
+  }
+
+  const handleShare = () => {
+    navigator.clipboard.writeText(window.location.href)
+    alert("Link copied!")
   }
 
   const handleRun = async () => {
@@ -115,77 +84,86 @@ export default function CanvasToolbar() {
 
   return (
     <>
-      {/* Top Bar */}
-      <Panel
-        position="top-left"
-        className="!m-0 !p-0"
-        style={{ width: "100vw" }}
-      >
-        <div className="flex items-center gap-2 bg-[#111111] border-b border-white/5 px-4 py-2 w-full">
-          {/* Back */}
+      {/* Top Bar - fixed position to avoid ReactFlow Panel issues */}
+      <Panel position="top-left" className="!m-0 !p-0 !left-0 !top-0 !right-0" style={{ width: "100%", zIndex: 100 }}>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          background: "#111111",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          padding: "8px 16px",
+          width: "100%",
+          gap: "12px",
+        }}>
+          {/* Back button */}
           <button
             onClick={() => router.push("/dashboard")}
-            className="flex items-center gap-1.5 text-white/40 hover:text-white transition-colors mr-1"
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 28, height: 28, borderRadius: 8,
+              background: "rgba(147,51,234,0.3)", border: "none", cursor: "pointer",
+              flexShrink: 0,
+            }}
           >
-            <ArrowLeft size={16} />
+            <ArrowLeft size={14} color="#c084fc" />
           </button>
 
-          {/* Workflow Name */}
+          {/* Workflow name */}
           {isEditingName ? (
             <input
               autoFocus
               value={workflowName}
               onChange={(e) => setWorkflowName(e.target.value)}
               onBlur={() => setIsEditingName(false)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") setIsEditingName(false)
+              onKeyDown={(e) => { if (e.key === "Enter") setIsEditingName(false) }}
+              style={{
+                background: "rgba(255,255,255,0.1)", color: "white",
+                border: "1px solid rgba(255,255,255,0.2)", borderRadius: 6,
+                padding: "2px 8px", fontSize: 14, fontWeight: 600, outline: "none", width: 180,
               }}
-              className="bg-white/10 text-sm font-medium px-2 py-1 rounded outline-none border border-white/20 w-40"
             />
           ) : (
             <button
               onClick={() => setIsEditingName(true)}
-              className="text-sm font-medium text-white/80 hover:text-white px-2 py-1 rounded hover:bg-white/5 transition-colors"
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "white", fontSize: 14, fontWeight: 600, padding: "2px 4px",
+              }}
             >
               {workflowName}
             </button>
           )}
 
-          <div className="flex-1" />
+          <div style={{ flex: 1 }} />
 
-          {/* Buttons */}
-          <button
-            onClick={handleImport}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222] border border-white/10 rounded-lg transition-colors"
-          >
-            <Upload size={13} />
-            Open
+          {/* OPEN */}
+          <button onClick={handleOpen} style={btnStyle}>
+            <FolderOpen size={13} />
+            OPEN
           </button>
 
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222] border border-white/10 rounded-lg transition-colors"
-          >
-            <Download size={13} />
-            Export
+          {/* SHARE */}
+          <button onClick={handleShare} style={btnStyle}>
+            <Share2 size={13} />
+            SHARE
           </button>
 
-          <button
-            onClick={handleSave}
-            disabled={isSaving}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222] border border-white/10 rounded-lg transition-colors disabled:opacity-60"
-          >
+          {/* SAVE */}
+          <button onClick={handleSave} disabled={isSaving} style={btnStyle}>
             <Save size={13} />
-            {isSaving ? "Saving..." : "Save"}
+            {isSaving ? "SAVING..." : "SAVE"}
           </button>
 
-          <button
-            onClick={handleRun}
-            disabled={isRunning}
-            className="flex items-center gap-2 text-sm px-4 py-1.5 bg-[#d4f57a] hover:bg-[#c8ec6a] text-black font-semibold rounded-lg transition-colors disabled:opacity-60"
-          >
-            <Play size={14} />
-            {isRunning ? "Running..." : "Run"}
+          {/* RUN */}
+          <button onClick={handleRun} disabled={isRunning} style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: "#d4f57a", color: "black",
+            border: "none", borderRadius: 8, cursor: "pointer",
+            padding: "6px 20px", fontSize: 13, fontWeight: 700,
+            opacity: isRunning ? 0.6 : 1,
+          }}>
+            <Play size={13} fill="black" />
+            {isRunning ? "RUNNING..." : "RUN"}
           </button>
         </div>
       </Panel>
@@ -193,70 +171,34 @@ export default function CanvasToolbar() {
       {/* Bottom Toolbar */}
       <Panel position="bottom-center" className="!mb-4">
         <div className="flex items-center gap-1 bg-[#1a1a1a] border border-white/10 rounded-xl px-2 py-1.5 shadow-xl">
-          <button
-            onClick={() => setTool("select")}
-            className={`p-2 rounded-lg transition-colors ${
-              tool === "select"
-                ? "bg-[#d4f57a] text-black"
-                : "text-white/60 hover:text-white hover:bg-white/10"
-            }`}
-            title="Select"
-          >
+          <button onClick={() => setTool("select")}
+            className={`p-2 rounded-lg transition-colors ${tool === "select" ? "bg-[#d4f57a] text-black" : "text-white/60 hover:text-white hover:bg-white/10"}`}>
             <MousePointer2 size={16} />
           </button>
-
-          <button
-            onClick={() => setTool("pan")}
-            className={`p-2 rounded-lg transition-colors ${
-              tool === "pan"
-                ? "bg-[#d4f57a] text-black"
-                : "text-white/60 hover:text-white hover:bg-white/10"
-            }`}
-            title="Pan"
-          >
+          <button onClick={() => setTool("pan")}
+            className={`p-2 rounded-lg transition-colors ${tool === "pan" ? "bg-[#d4f57a] text-black" : "text-white/60 hover:text-white hover:bg-white/10"}`}>
             <Hand size={16} />
           </button>
-
           <div className="w-px h-5 bg-white/10 mx-1" />
-
-          <button
-            onClick={handleUndo}
-            className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-            title="Undo"
-          >
-            <Undo2 size={16} />
-          </button>
-
-          <button
-            onClick={handleRedo}
-            className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-            title="Redo"
-          >
-            <Redo2 size={16} />
-          </button>
-
+          <button onClick={handleUndo} className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"><Undo2 size={16} /></button>
+          <button onClick={handleRedo} className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"><Redo2 size={16} /></button>
           <div className="w-px h-5 bg-white/10 mx-1" />
-
-          <button
-            onClick={() => zoomOut()}
-            className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors font-bold"
-          >
-            -
-          </button>
-          <button
-            onClick={() => fitView()}
-            className="px-2 py-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors text-xs min-w-14 text-center"
-          >
+          <button onClick={() => zoomOut()} className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors text-base font-bold">-</button>
+          <button onClick={() => fitView()} className="px-2 py-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors text-xs min-w-14 text-center">
             {Math.round(zoom * 100)}%
           </button>
-          <button
-            onClick={() => zoomIn()}
-            className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors font-bold"
-          >
-            +
-          </button>
+          <button onClick={() => zoomIn()} className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors text-base font-bold">+</button>
         </div>
       </Panel>
     </>
   )
+}
+
+const btnStyle: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 6,
+  background: "rgba(255,255,255,0.05)",
+  color: "rgba(255,255,255,0.7)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 8, cursor: "pointer",
+  padding: "5px 12px", fontSize: 12, fontWeight: 500,
 }
