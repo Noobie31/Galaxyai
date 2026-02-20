@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
+import { GoogleGenerativeAI } from "@google/generative-ai"
 import { z } from "zod"
 
 export const maxDuration = 120
@@ -10,16 +11,9 @@ const executeSchema = z.object({
   inputs: z.record(z.any()),
 })
 
-// ── Transloadit: upload buffer and poll until complete ───────────────────────
-async function uploadToTransloadit(
-  fileBuffer: Buffer,
-  fileName: string,
-  mimeType: string
-): Promise<string> {
-  const transloaditKey = process.env.NEXT_PUBLIC_TRANSLOADIT_KEY!
-
+async function uploadToTransloadit(fileBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
   const params = JSON.stringify({
-    auth: { key: transloaditKey },
+    auth: { key: process.env.NEXT_PUBLIC_TRANSLOADIT_KEY },
     steps: { ":original": { robot: "/upload/handle" } },
   })
 
@@ -27,64 +21,78 @@ async function uploadToTransloadit(
   formData.append("params", params)
   formData.append("file", new Blob([fileBuffer], { type: mimeType }), fileName)
 
-  const uploadRes = await fetch("https://api2.transloadit.com/assemblies", {
-    method: "POST",
-    body: formData,
-  })
+  const res = await fetch("https://api2.transloadit.com/assemblies", { method: "POST", body: formData })
+  const result = await res.json()
 
-  if (!uploadRes.ok) {
-    throw new Error(`Transloadit upload failed: ${uploadRes.statusText}`)
+  const extractUrl = (r: any): string | null => {
+    if (r.uploads?.length > 0) return r.uploads[0].ssl_url || r.uploads[0].url || null
+    for (const key of Object.keys(r.results || {})) {
+      if (r.results[key]?.[0]?.ssl_url) return r.results[key][0].ssl_url
+    }
+    return null
   }
 
-  const uploadResult = await uploadRes.json()
-
-  if (uploadResult.ok === "ASSEMBLY_COMPLETED") {
-    return extractTransloaditUrl(uploadResult)
-  }
-
-  if (uploadResult.ok === "ASSEMBLY_FAILED") {
-    throw new Error(`Transloadit failed: ${uploadResult.error}`)
-  }
-
-  // Poll for completion
-  const assemblyUrl =
-    uploadResult.assembly_ssl_url || uploadResult.assembly_url
-  if (!assemblyUrl) throw new Error("No Transloadit assembly URL returned")
-
-  for (let i = 0; i < 30; i++) {
-    await new Promise((r) => setTimeout(r, 2000))
-    const poll = await fetch(assemblyUrl)
-    const result = await poll.json()
-
-    if (result.ok === "ASSEMBLY_COMPLETED") return extractTransloaditUrl(result)
-    if (result.ok === "ASSEMBLY_FAILED")
-      throw new Error(`Transloadit failed: ${result.error}`)
-  }
-
-  throw new Error("Transloadit upload timed out")
-}
-
-function extractTransloaditUrl(result: any): string {
-  if (result.uploads?.length > 0) {
-    const url = result.uploads[0].ssl_url || result.uploads[0].url
+  if (result.ok === "ASSEMBLY_COMPLETED") {
+    const url = extractUrl(result)
     if (url) return url
   }
-  const orig = result.results?.[":original"]
-  if (orig?.length > 0) {
-    const url = orig[0].ssl_url || orig[0].url
-    if (url) return url
-  }
-  for (const key of Object.keys(result.results || {})) {
-    const items = result.results[key]
-    if (items?.length > 0) {
-      const url = items[0].ssl_url || items[0].url
-      if (url) return url
+
+  if (result.assembly_ssl_url) {
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 2000))
+      const poll = await (await fetch(result.assembly_ssl_url)).json()
+      if (poll.ok === "ASSEMBLY_COMPLETED") {
+        const url = extractUrl(poll)
+        if (url) return url
+        throw new Error("No URL in completed assembly")
+      }
+      if (poll.ok === "ASSEMBLY_FAILED") throw new Error("Assembly failed")
     }
   }
-  throw new Error("No URL in Transloadit response")
+
+  throw new Error("Upload timed out")
 }
 
-// ── Main handler ─────────────────────────────────────────────────────────────
+function getFfmpeg() {
+  const fluentFfmpeg = require("fluent-ffmpeg")
+  
+  // Try multiple ffmpeg paths
+  const possiblePaths = [
+    "ffmpeg", // system PATH
+    "C:\\ffmpeg\\bin\\ffmpeg.exe",
+    "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+    "C:\\ProgramData\\chocolatey\\bin\\ffmpeg.exe",
+  ]
+
+  // Try ffmpeg-static but get the actual module path not the bundled one
+  try {
+    const staticPath = require.resolve("ffmpeg-static")
+    const actualPath = staticPath.replace(/\\/g, "\\").replace(".next\\server\\vendor-chunks\\ffmpeg.exe", "node_modules\\ffmpeg-static\\ffmpeg.exe")
+    const fs = require("fs")
+    if (fs.existsSync(actualPath)) {
+      fluentFfmpeg.setFfmpegPath(actualPath)
+      console.log("Using ffmpeg from node_modules:", actualPath)
+      return fluentFfmpeg
+    }
+  } catch (e) {}
+
+  // Try node_modules directly
+  try {
+    const path = require("path")
+    const fs = require("fs")
+    const nmPath = path.join(process.cwd(), "node_modules", "ffmpeg-static", "ffmpeg.exe")
+    if (fs.existsSync(nmPath)) {
+      fluentFfmpeg.setFfmpegPath(nmPath)
+      console.log("Using ffmpeg from node_modules direct:", nmPath)
+      return fluentFfmpeg
+    }
+  } catch (e) {}
+
+  // Use system ffmpeg
+  console.log("Using system ffmpeg")
+  return fluentFfmpeg
+}
+
 export async function POST(req: Request) {
   const { userId } = await auth()
   if (!userId)
@@ -95,7 +103,6 @@ export async function POST(req: Request) {
 
   try {
     switch (nodeType) {
-      // ── Pass-through nodes ──────────────────────────────────────────────
       case "textNode":
         return NextResponse.json({ output: inputs.text || "" })
 
@@ -105,28 +112,19 @@ export async function POST(req: Request) {
       case "videoUploadNode":
         return NextResponse.json({ output: inputs.videoUrl || "" })
 
-      // ── LLM via Google Gemini directly ──────────────────────────────────
       case "llmNode": {
-        const { GoogleGenerativeAI } = await import("@google/generative-ai")
-
         const apiKey = process.env.GEMINI_API_KEY
         if (!apiKey) throw new Error("GEMINI_API_KEY not set")
 
         const genAI = new GoogleGenerativeAI(apiKey)
         const model = genAI.getGenerativeModel({
-          model: inputs.model || "gemini-1.5-flash",
-          ...(inputs.system_prompt
-            ? { systemInstruction: inputs.system_prompt }
-            : {}),
+          model: inputs.model || "gemini-2.5-flash",
+          ...(inputs.system_prompt ? { systemInstruction: inputs.system_prompt } : {}),
         })
 
         const parts: any[] = []
+        if (inputs.user_message) parts.push({ text: inputs.user_message })
 
-        if (inputs.user_message) {
-          parts.push({ text: inputs.user_message })
-        }
-
-        // Attach images
         if (inputs.images?.length > 0) {
           for (const imageUrl of inputs.images) {
             if (!imageUrl) continue
@@ -135,37 +133,22 @@ export async function POST(req: Request) {
               if (!res.ok) continue
               const buffer = await res.arrayBuffer()
               const base64 = Buffer.from(buffer).toString("base64")
-              const mimeType =
-                res.headers.get("content-type")?.split(";")[0] || "image/jpeg"
+              const mimeType = res.headers.get("content-type")?.split(";")[0] || "image/jpeg"
               parts.push({ inlineData: { data: base64, mimeType } })
-            } catch {
-              console.warn("Failed to fetch image:", imageUrl)
-            }
+            } catch { console.warn("Failed to fetch image:", imageUrl) }
           }
         }
 
-        if (parts.length === 0) {
-          return NextResponse.json(
-            { error: "No content to send to LLM" },
-            { status: 400 }
-          )
-        }
+        if (parts.length === 0) return NextResponse.json({ error: "No content to send" }, { status: 400 })
 
         const result = await model.generateContent(parts)
-        const text = result.response.text()
-        return NextResponse.json({ output: text })
+        return NextResponse.json({ output: result.response.text() })
       }
 
-      // ── Crop Image via FFmpeg directly ──────────────────────────────────
       case "cropImageNode": {
-        if (!inputs.image_url) {
-          return NextResponse.json(
-            { error: "No image URL provided" },
-            { status: 400 }
-          )
-        }
+        if (!inputs.image_url) return NextResponse.json({ error: "No image URL" }, { status: 400 })
 
-        const ffmpeg = require("fluent-ffmpeg")
+        const ffmpeg = getFfmpeg()
         const axios = require("axios")
         const fs = require("fs")
         const path = require("path")
@@ -176,32 +159,20 @@ export async function POST(req: Request) {
         const outputPath = path.join(tmpDir, `output_${Date.now()}.jpg`)
 
         try {
-          const response = await axios.get(inputs.image_url, {
-            responseType: "arraybuffer",
-            timeout: 30000,
-          })
+          const response = await axios.get(inputs.image_url, { responseType: "arraybuffer", timeout: 30000 })
           fs.writeFileSync(inputPath, response.data)
 
           await new Promise<void>((resolve, reject) => {
             ffmpeg.ffprobe(inputPath, (err: any, metadata: any) => {
               if (err) return reject(new Error(`ffprobe failed: ${err.message}`))
-
-              const stream = metadata.streams.find(
-                (s: any) => s.codec_type === "video" || s.width
-              )
-              if (!stream) return reject(new Error("No image stream found"))
+              const stream = metadata.streams.find((s: any) => s.width)
+              if (!stream) return reject(new Error("No image stream"))
 
               const { width, height } = stream
-
-              const xPct = Math.max(0, Math.min(100, Number(inputs.x_percent) || 0))
-              const yPct = Math.max(0, Math.min(100, Number(inputs.y_percent) || 0))
-              const wPct = Math.max(1, Math.min(100, Number(inputs.width_percent) || 100))
-              const hPct = Math.max(1, Math.min(100, Number(inputs.height_percent) || 100))
-
-              const cropX = Math.floor((xPct / 100) * width)
-              const cropY = Math.floor((yPct / 100) * height)
-              const cropW = Math.min(Math.floor((wPct / 100) * width), width - cropX)
-              const cropH = Math.min(Math.floor((hPct / 100) * height), height - cropY)
+              const cropX = Math.floor((Math.max(0, Math.min(100, Number(inputs.x_percent) || 0)) / 100) * width)
+              const cropY = Math.floor((Math.max(0, Math.min(100, Number(inputs.y_percent) || 0)) / 100) * height)
+              const cropW = Math.min(Math.floor((Math.max(1, Math.min(100, Number(inputs.width_percent) || 100)) / 100) * width), width - cropX)
+              const cropH = Math.min(Math.floor((Math.max(1, Math.min(100, Number(inputs.height_percent) || 100)) / 100) * height), height - cropY)
 
               ffmpeg(inputPath)
                 .videoFilter(`crop=${cropW}:${cropH}:${cropX}:${cropY}`)
@@ -221,16 +192,10 @@ export async function POST(req: Request) {
         }
       }
 
-      // ── Extract Frame via FFmpeg directly ───────────────────────────────
       case "extractFrameNode": {
-        if (!inputs.video_url) {
-          return NextResponse.json(
-            { error: "No video URL provided" },
-            { status: 400 }
-          )
-        }
+        if (!inputs.video_url) return NextResponse.json({ error: "No video URL" }, { status: 400 })
 
-        const ffmpeg = require("fluent-ffmpeg")
+        const ffmpeg = getFfmpeg()
         const axios = require("axios")
         const fs = require("fs")
         const path = require("path")
@@ -241,10 +206,7 @@ export async function POST(req: Request) {
         const outputPath = path.join(tmpDir, `frame_${Date.now()}.jpg`)
 
         try {
-          const response = await axios.get(inputs.video_url, {
-            responseType: "arraybuffer",
-            timeout: 60000,
-          })
+          const response = await axios.get(inputs.video_url, { responseType: "arraybuffer", timeout: 60000 })
           fs.writeFileSync(inputPath, response.data)
 
           let timeInSeconds = 0
@@ -282,16 +244,10 @@ export async function POST(req: Request) {
       }
 
       default:
-        return NextResponse.json(
-          { error: `Unknown node type: ${nodeType}` },
-          { status: 400 }
-        )
+        return NextResponse.json({ error: `Unknown node type: ${nodeType}` }, { status: 400 })
     }
   } catch (err: any) {
-    console.error(`[execute] nodeType=${nodeType} error:`, err)
-    return NextResponse.json(
-      { error: err?.message || "Internal server error" },
-      { status: 500 }
-    )
+    console.error("Execute error:", err.message)
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }

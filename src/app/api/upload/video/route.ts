@@ -19,23 +19,13 @@ export async function POST(req: Request) {
     const buffer = Buffer.from(bytes)
 
     const params = JSON.stringify({
-      auth: {
-        key: process.env.NEXT_PUBLIC_TRANSLOADIT_KEY,
-      },
-      steps: {
-        ":original": {
-          robot: "/upload/handle",
-        },
-      },
+      auth: { key: process.env.NEXT_PUBLIC_TRANSLOADIT_KEY },
+      steps: { ":original": { robot: "/upload/handle" } },
     })
 
     const transloaditFormData = new FormData()
     transloaditFormData.append("params", params)
-    transloaditFormData.append(
-      "file",
-      new Blob([buffer], { type: file.type }),
-      file.name
-    )
+    transloaditFormData.append("file", new Blob([buffer], { type: file.type }), file.name)
 
     const res = await fetch("https://api2.transloadit.com/assemblies", {
       method: "POST",
@@ -43,44 +33,48 @@ export async function POST(req: Request) {
     })
 
     const result = await res.json()
-    console.log("Transloadit video response:", result.ok, result.error)
+    console.log("Transloadit video initial:", result.ok)
+
+    const extractUrl = (r: any): string | null => {
+      if (r.uploads?.length > 0) {
+        return r.uploads[0].ssl_url || r.uploads[0].url || null
+      }
+      for (const key of Object.keys(r.results || {})) {
+        if (r.results[key]?.[0]?.ssl_url) return r.results[key][0].ssl_url
+        if (r.results[key]?.[0]?.url) return r.results[key][0].url
+      }
+      return null
+    }
 
     if (result.ok === "ASSEMBLY_COMPLETED") {
-      const uploadedFile = result.results?.[":original"]?.[0]
-      if (uploadedFile?.ssl_url) {
-        return NextResponse.json({ url: uploadedFile.ssl_url })
-      }
+      const url = extractUrl(result)
+      if (url) return NextResponse.json({ url })
     }
 
     if (result.assembly_ssl_url) {
-      let attempts = 0
-      while (attempts < 20) {
+      for (let i = 0; i < 30; i++) {
         await new Promise((r) => setTimeout(r, 2000))
         const pollRes = await fetch(result.assembly_ssl_url)
         const pollResult = await pollRes.json()
-        console.log("Poll attempt", attempts, "status:", pollResult.ok)
+        console.log("Video poll", i, pollResult.ok)
+
         if (pollResult.ok === "ASSEMBLY_COMPLETED") {
-          const uploadedFile = pollResult.results?.[":original"]?.[0]
-          if (uploadedFile?.ssl_url) {
-            return NextResponse.json({ url: uploadedFile.ssl_url })
-          }
+          const url = extractUrl(pollResult)
+          if (url) return NextResponse.json({ url })
+          console.log("Completed but no URL, uploads:", JSON.stringify(pollResult.uploads))
+          console.log("Results keys:", Object.keys(pollResult.results || {}))
+          return NextResponse.json({ error: "No URL in completed assembly" }, { status: 500 })
         }
+
         if (pollResult.ok === "ASSEMBLY_FAILED") {
-          return NextResponse.json(
-            { error: "Assembly failed", details: pollResult.error },
-            { status: 500 }
-          )
+          return NextResponse.json({ error: pollResult.error || "Assembly failed" }, { status: 500 })
         }
-        attempts++
       }
     }
 
-    return NextResponse.json(
-      { error: "Upload failed", details: result.error },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: "Upload timed out" }, { status: 500 })
   } catch (err: any) {
-    console.error("Upload exception:", err.message)
+    console.error("Video upload error:", err.message)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
