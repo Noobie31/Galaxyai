@@ -3,6 +3,11 @@ import ffmpeg from "fluent-ffmpeg"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+import ffmpegStatic from "ffmpeg-static"
+import ffprobeStatic from "ffprobe-static"
+
+ffmpeg.setFfmpegPath(ffmpegStatic as string)
+ffmpeg.setFfprobePath(ffprobeStatic.path)
 
 async function uploadToTransloadit(fileBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
   const params = JSON.stringify({
