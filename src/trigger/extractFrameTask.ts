@@ -1,11 +1,12 @@
-import { task, logger } from "@trigger.dev/sdk/v3"
+import { task } from "@trigger.dev/sdk/v3"
+import ffmpeg from "fluent-ffmpeg"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
 
 async function uploadToTransloadit(fileBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
   const params = JSON.stringify({
-    auth: { key: process.env.NEXT_PUBLIC_TRANSLOADIT_KEY! },
+    auth: { key: process.env.NEXT_PUBLIC_TRANSLOADIT_KEY },
     steps: { ":original": { robot: "/upload/handle" } },
   })
   const formData = new FormData()
@@ -14,81 +15,64 @@ async function uploadToTransloadit(fileBuffer: Buffer, fileName: string, mimeTyp
 
   const res = await fetch("https://api2.transloadit.com/assemblies", { method: "POST", body: formData })
   const result = await res.json()
+  const assemblyUrl = result.assembly_ssl_url || result.assembly_url
 
-  const poll = async (url: string): Promise<string> => {
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 2000))
-      const pr = await (await fetch(url)).json()
-      if (pr.ok === "ASSEMBLY_COMPLETED") {
-        if (pr.uploads?.[0]?.ssl_url) return pr.uploads[0].ssl_url
-        for (const key of Object.keys(pr.results || {})) {
-          if (pr.results[key]?.[0]?.ssl_url) return pr.results[key][0].ssl_url
-        }
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 1500))
+    const poll = await (await fetch(assemblyUrl)).json()
+    if (poll.ok === "ASSEMBLY_COMPLETED") {
+      if (poll.uploads?.length > 0) return poll.uploads[0].ssl_url || poll.uploads[0].url
+      for (const key of Object.keys(poll.results || {})) {
+        if (poll.results[key]?.length > 0) return poll.results[key][0].ssl_url || poll.results[key][0].url
       }
-      if (pr.ok === "ASSEMBLY_FAILED") throw new Error("Upload failed")
     }
-    throw new Error("Upload timed out")
+    if (poll.ok === "ASSEMBLY_FAILED") throw new Error(poll.error)
   }
-
-  if (result.ok === "ASSEMBLY_COMPLETED") {
-    if (result.uploads?.[0]?.ssl_url) return result.uploads[0].ssl_url
-  }
-  if (result.assembly_ssl_url) return poll(result.assembly_ssl_url)
-  throw new Error("No assembly URL")
+  throw new Error("Upload timed out")
 }
 
 export const extractFrameTask = task({
   id: "extract-frame-task",
-  maxDuration: 180,
+  retry: { maxAttempts: 2 },
   run: async (payload: { videoUrl: string; timestamp: string }) => {
-    const ffmpeg = require("fluent-ffmpeg")
-    const axios = require("axios")
-
     const tmpDir = os.tmpdir()
-    const inputPath = path.join(tmpDir, `video_${Date.now()}.mp4`)
-    const outputPath = path.join(tmpDir, `frame_${Date.now()}.jpg`)
+    const inputPath = path.join(tmpDir, `input-${Date.now()}.mp4`)
+    const outputPath = path.join(tmpDir, `frame-${Date.now()}.jpg`)
 
-    try {
-      logger.log("Downloading video...")
-      const response = await axios.get(payload.videoUrl, { responseType: "arraybuffer", timeout: 60000 })
-      fs.writeFileSync(inputPath, response.data)
+    const res = await fetch(payload.videoUrl)
+    const buffer = Buffer.from(await res.arrayBuffer())
+    fs.writeFileSync(inputPath, buffer)
 
-      let timeInSeconds = 0
-      const ts = String(payload.timestamp || "0").trim()
-
-      if (ts.endsWith("%")) {
-        const percent = parseFloat(ts) / 100
-        timeInSeconds = await new Promise<number>((resolve, reject) => {
-          ffmpeg.ffprobe(inputPath, (err: any, metadata: any) => {
-            if (err) return reject(new Error(`ffprobe failed: ${err.message}`))
-            resolve((metadata.format.duration || 0) * percent)
-          })
-        })
-      } else {
-        timeInSeconds = parseFloat(ts) || 0
-      }
-
-      logger.log("Extracting frame at", { timeInSeconds })
-
+    let seekTime = 0
+    if (payload.timestamp?.endsWith("%")) {
+      const percent = parseFloat(payload.timestamp) / 100
       await new Promise<void>((resolve, reject) => {
-        ffmpeg(inputPath)
-          .seekInput(timeInSeconds)
-          .frames(1)
-          .output(outputPath)
-          .on("end", () => resolve())
-          .on("error", (e: Error) => reject(new Error(`ffmpeg failed: ${e.message}`)))
-          .run()
+        ffmpeg.ffprobe(inputPath, (err: any, metadata: any) => {
+          if (err) return reject(err)
+          const duration = metadata.format.duration || 10
+          seekTime = duration * percent
+          resolve()
+        })
       })
-
-      const fileBuffer = fs.readFileSync(outputPath)
-      logger.log("Uploading frame to Transloadit...")
-      const url = await uploadToTransloadit(fileBuffer, "frame.jpg", "image/jpeg")
-      logger.log("Done", { url })
-      return url
-    } finally {
-      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath)
-      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath)
+    } else {
+      seekTime = parseFloat(payload.timestamp) || 0
     }
+
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(inputPath)
+        .seekInput(seekTime)
+        .frames(1)
+        .output(outputPath)
+        .on("end", () => resolve())
+        .on("error", reject)
+        .run()
+    })
+
+    const outputBuffer = fs.readFileSync(outputPath)
+    fs.unlinkSync(inputPath)
+    fs.unlinkSync(outputPath)
+
+    const url = await uploadToTransloadit(outputBuffer, "frame.jpg", "image/jpeg")
+    return { output: url }
   },
 })
-
