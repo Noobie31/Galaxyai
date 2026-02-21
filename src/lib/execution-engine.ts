@@ -1,7 +1,10 @@
 import { useExecutionStore } from "@/store/executionStore"
 import { useWorkflowStore } from "@/store/workflowStore"
 
-// Topological sort for DAG execution order
+// Non-executable node types — output resolved directly from node data
+const PASSTHROUGH_NODES = new Set(["textNode", "imageUploadNode", "videoUploadNode"])
+
+// Topological sort — returns levels for parallel execution
 function topologicalSort(nodes: any[], edges: any[]): string[][] {
     const inDegree: Record<string, number> = {}
     const adjList: Record<string, string[]> = {}
@@ -13,8 +16,8 @@ function topologicalSort(nodes: any[], edges: any[]): string[][] {
     })
 
     edges.forEach((edge) => {
-        adjList[edge.source].push(edge.target)
-        inDegree[edge.target]++
+        if (adjList[edge.source]) adjList[edge.source].push(edge.target)
+        if (inDegree[edge.target] !== undefined) inDegree[edge.target]++
     })
 
     const levels: string[][] = []
@@ -35,27 +38,19 @@ function topologicalSort(nodes: any[], edges: any[]): string[][] {
     return levels
 }
 
-// Get output value from a node
+// Get output value from a node (passthrough nodes read directly from data)
 function getNodeOutput(nodeId: string, nodes: any[]): any {
-    const executionState = useExecutionStore.getState()
-    const cached = executionState.nodeStates[nodeId]?.output
-
-    // For text nodes, always read fresh from node data
     const node = nodes.find((n) => n.id === nodeId)
-    if (node?.type === "textNode") {
-        return node.data?.text || ""
-    }
-    if (node?.type === "imageUploadNode") {
-        return node.data?.imageUrl || ""
-    }
-    if (node?.type === "videoUploadNode") {
-        return node.data?.videoUrl || ""
-    }
 
-    return cached
+    if (node?.type === "textNode") return node.data?.text || ""
+    if (node?.type === "imageUploadNode") return node.data?.imageUrl || ""
+    if (node?.type === "videoUploadNode") return node.data?.videoUrl || ""
+
+    // For executable nodes, get from execution store
+    return useExecutionStore.getState().nodeStates[nodeId]?.output
 }
 
-// Resolve inputs for a node based on connected edges
+// Resolve all inputs for a node from connected edges + node data defaults
 function resolveNodeInputs(nodeId: string, nodes: any[], edges: any[]): Record<string, any> {
     const inputs: Record<string, any> = {}
     const node = nodes.find((n) => n.id === nodeId)
@@ -64,38 +59,88 @@ function resolveNodeInputs(nodeId: string, nodes: any[], edges: any[]): Record<s
     const incomingEdges = edges.filter((e) => e.target === nodeId)
 
     incomingEdges.forEach((edge) => {
-        const sourceOutput = getNodeOutput(edge.source, nodes)  // pass nodes here
-        if (sourceOutput !== undefined && edge.targetHandle) {
+        const sourceOutput = getNodeOutput(edge.source, nodes)
+        if (sourceOutput !== undefined && sourceOutput !== null && edge.targetHandle) {
             if (edge.targetHandle === "images") {
                 if (!inputs.images) inputs.images = []
-                inputs.images.push(sourceOutput)
+                if (Array.isArray(sourceOutput)) {
+                    inputs.images.push(...sourceOutput)
+                } else {
+                    inputs.images.push(sourceOutput)
+                }
             } else {
                 inputs[edge.targetHandle] = sourceOutput
             }
         }
     })
 
+    // Fill defaults from node data for unconnected handles
     const nodeData = node.data || {}
-    if (node.type === "textNode") {
-        inputs.text = nodeData.text
-    }
+
+    if (node.type === "textNode") inputs.text = nodeData.text
+    if (node.type === "imageUploadNode") inputs.image_url = nodeData.imageUrl
+    if (node.type === "videoUploadNode") inputs.video_url = nodeData.videoUrl
+
     if (node.type === "cropImageNode") {
-        if (!inputs.x_percent) inputs.x_percent = nodeData.xPercent ?? 0
-        if (!inputs.y_percent) inputs.y_percent = nodeData.yPercent ?? 0
-        if (!inputs.width_percent) inputs.width_percent = nodeData.widthPercent ?? 100
-        if (!inputs.height_percent) inputs.height_percent = nodeData.heightPercent ?? 100
+        if (inputs.x_percent === undefined) inputs.x_percent = nodeData.xPercent ?? 0
+        if (inputs.y_percent === undefined) inputs.y_percent = nodeData.yPercent ?? 0
+        if (inputs.width_percent === undefined) inputs.width_percent = nodeData.widthPercent ?? 100
+        if (inputs.height_percent === undefined) inputs.height_percent = nodeData.heightPercent ?? 100
     }
+
     if (node.type === "extractFrameNode") {
-        if (!inputs.timestamp) inputs.timestamp = nodeData.timestamp ?? "0"
+        if (inputs.timestamp === undefined) inputs.timestamp = nodeData.timestamp ?? "0"
     }
+
     if (node.type === "llmNode") {
-        inputs.model = nodeData.model || "gemini-2.5-flash"
+        inputs.model = nodeData.model || "gemini-2.0-flash"
+        // Fill manual text inputs only if handle not connected
+        if (!inputs.system_prompt && nodeData.systemPrompt) {
+            inputs.system_prompt = nodeData.systemPrompt
+        }
+        if (!inputs.user_message && nodeData.userMessage) {
+            inputs.user_message = nodeData.userMessage
+        }
     }
 
     return inputs
 }
 
-// Execute a single node via API
+// Poll a Trigger.dev run until completion or failure
+async function pollRun(
+    runId: string,
+    nodeId: string,
+    timeoutMs = 300000 // 5 minutes
+): Promise<any> {
+    const { setNodeStatus, setNodeOutput, setNodeError } = useExecutionStore.getState()
+    const startTime = Date.now()
+
+    while (Date.now() - startTime < timeoutMs) {
+        await new Promise((r) => setTimeout(r, 2000))
+
+        try {
+            const res = await fetch(`/api/execute/poll?runId=${runId}`)
+            const data = await res.json()
+
+            if (data.status === "COMPLETED") {
+                return data.output
+            }
+
+            if (data.status === "FAILED") {
+                throw new Error(data.error || "Task failed")
+            }
+
+            // PENDING — keep polling
+        } catch (err: any) {
+            // Network error — retry
+            if (Date.now() - startTime > timeoutMs - 5000) throw err
+        }
+    }
+
+    throw new Error("Task timed out after 5 minutes")
+}
+
+// Execute a single node via API + poll if needed
 async function executeNode(
     nodeId: string,
     nodeType: string,
@@ -103,6 +148,14 @@ async function executeNode(
 ): Promise<any> {
     const { setNodeStatus, setNodeOutput, setNodeError, setNodeStartTime, setNodeDuration } =
         useExecutionStore.getState()
+
+    // Passthrough nodes don't need API execution
+    if (PASSTHROUGH_NODES.has(nodeType)) {
+        setNodeStatus(nodeId, "success")
+        const output = inputs.text || inputs.image_url || inputs.video_url || ""
+        setNodeOutput(nodeId, output)
+        return output
+    }
 
     setNodeStatus(nodeId, "running")
     setNodeStartTime(nodeId, Date.now())
@@ -120,14 +173,26 @@ async function executeNode(
             throw new Error(result.error || "Execution failed")
         }
 
-        const duration = Date.now() - (useExecutionStore.getState().nodeStates[nodeId]?.startTime || Date.now())
+        let output: any
+
+        if (result.pending && result.runId) {
+            // Trigger.dev task triggered — poll for result
+            output = await pollRun(result.runId, nodeId)
+        } else {
+            // Direct result (shouldn't happen with new route but handle gracefully)
+            output = result.output
+        }
+
+        const duration =
+            Date.now() - (useExecutionStore.getState().nodeStates[nodeId]?.startTime || Date.now())
         setNodeDuration(nodeId, duration)
         setNodeStatus(nodeId, "success")
-        setNodeOutput(nodeId, result.output)
+        setNodeOutput(nodeId, output)
 
-        return result.output
+        return output
     } catch (err: any) {
-        const duration = Date.now() - (useExecutionStore.getState().nodeStates[nodeId]?.startTime || Date.now())
+        const duration =
+            Date.now() - (useExecutionStore.getState().nodeStates[nodeId]?.startTime || Date.now())
         setNodeDuration(nodeId, duration)
         setNodeStatus(nodeId, "failed")
         setNodeError(nodeId, err.message || "Unknown error")
@@ -151,16 +216,17 @@ async function saveRun(
         })
         const run = await res.json()
 
-        // Save node executions
-        await Promise.all(
-            nodeResults.map((nr) =>
-                fetch("/api/runs/nodes", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ runId: run.id, ...nr }),
-                })
+        if (run.id && nodeResults.length > 0) {
+            await Promise.all(
+                nodeResults.map((nr) =>
+                    fetch("/api/runs/nodes", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ runId: run.id, ...nr }),
+                    })
+                )
             )
-        )
+        }
     } catch (e) {
         console.error("Failed to save run", e)
     }
@@ -202,7 +268,7 @@ export async function runWorkflow(
                             nodeType: node.type,
                             status: "success",
                             inputs,
-                            outputs: output,
+                            outputs: { output },
                             duration: Date.now() - nodeStart,
                         })
                     } catch (err: any) {
@@ -235,6 +301,7 @@ export async function runSingleNode(
 ) {
     const { setIsRunning, resetNodeStates } = useExecutionStore.getState()
     resetNodeStates()
+
     const node = nodes.find((n) => n.id === nodeId)
     if (!node) return
 
@@ -245,11 +312,25 @@ export async function runSingleNode(
     try {
         const output = await executeNode(nodeId, node.type, inputs)
         await saveRun(workflowId, "single", "success", Date.now() - startTime, [
-            { nodeId, nodeType: node.type, status: "success", inputs, outputs: output, duration: Date.now() - startTime },
+            {
+                nodeId,
+                nodeType: node.type,
+                status: "success",
+                inputs,
+                outputs: { output },
+                duration: Date.now() - startTime,
+            },
         ])
     } catch (err: any) {
         await saveRun(workflowId, "single", "failed", Date.now() - startTime, [
-            { nodeId, nodeType: node.type, status: "failed", inputs, error: err.message, duration: Date.now() - startTime },
+            {
+                nodeId,
+                nodeType: node.type,
+                status: "failed",
+                inputs,
+                error: err.message,
+                duration: Date.now() - startTime,
+            },
         ])
     } finally {
         useExecutionStore.getState().setIsRunning(false)

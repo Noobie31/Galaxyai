@@ -12,6 +12,7 @@ const GEMINI_MODELS = [
     { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
     { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
 ]
+
 export default function LLMNode({ id, data }: NodeProps) {
     const { updateNode, removeNode } = useWorkflowStore()
     const { nodeStates } = useExecutionStore()
@@ -28,41 +29,46 @@ export default function LLMNode({ id, data }: NodeProps) {
         if (workflowId) runSingleNode(workflowId, id, nodes, edges)
     }
 
+    const borderColor =
+        status === "running"
+            ? "border-purple-500"
+            : status === "success"
+                ? "border-green-500/50"
+                : status === "failed"
+                    ? "border-red-500/50"
+                    : "border-white/10 hover:border-white/20"
+
+    const extraClasses =
+        status === "running"
+            ? "shadow-purple-500/30 shadow-lg ring-2 ring-purple-500/40 animate-pulse"
+            : ""
+
     return (
-        <div
-            className={`bg-[#1a1a1a] border rounded-xl w-72 shadow-xl transition-all ${status === "running"
-                ? "border-purple-500 shadow-purple-500/30 shadow-lg ring-2 ring-purple-500/40 animate-pulse"
-                : status === "success"
-                    ? "border-green-500/50"
-                    : status === "failed"
-                        ? "border-red-500/50"
-                        : "border-white/10 hover:border-white/20"
-                }`}
-        >
-            {/* Input Handles */}
+        <div className={`bg-[#1a1a1a] border rounded-xl w-72 shadow-xl transition-all ${borderColor} ${extraClasses}`}>
+            {/* ── Input Handles ── */}
             <Handle
                 type="target"
                 position={Position.Left}
                 id="system_prompt"
-                style={{ top: "30%" }}
+                style={{ top: "34%" }}
                 className="!w-3 !h-3 !bg-blue-500 !border-2 !border-[#1a1a1a]"
             />
             <Handle
                 type="target"
                 position={Position.Left}
                 id="user_message"
-                style={{ top: "50%" }}
+                style={{ top: "54%" }}
                 className="!w-3 !h-3 !bg-blue-500 !border-2 !border-[#1a1a1a]"
             />
             <Handle
                 type="target"
                 position={Position.Left}
                 id="images"
-                style={{ top: "70%" }}
+                style={{ top: "74%" }}
                 className="!w-3 !h-3 !bg-green-500 !border-2 !border-[#1a1a1a]"
             />
 
-            {/* Header */}
+            {/* ── Header ── */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
                 <div className="flex items-center gap-2">
                     <div className="w-6 h-6 rounded-lg bg-purple-500/20 flex items-center justify-center">
@@ -88,7 +94,7 @@ export default function LLMNode({ id, data }: NodeProps) {
                 </div>
             </div>
 
-            {/* Body */}
+            {/* ── Body ── */}
             <div className="p-3 space-y-2">
                 {/* Model Selector */}
                 <div className="relative">
@@ -97,8 +103,7 @@ export default function LLMNode({ id, data }: NodeProps) {
                         className="w-full flex items-center justify-between bg-[#111111] border border-white/5 rounded-lg px-3 py-2 text-xs text-white/70 hover:border-white/20 transition-colors"
                     >
                         <span>
-                            {GEMINI_MODELS.find((m) => m.value === data.model)?.label ||
-                                "Select Model"}
+                            {GEMINI_MODELS.find((m) => m.value === data.model)?.label || "Select Model"}
                         </span>
                         <ChevronDown size={12} />
                     </button>
@@ -120,49 +125,73 @@ export default function LLMNode({ id, data }: NodeProps) {
                     )}
                 </div>
 
-                {/* Handle Labels */}
+                {/* System Prompt — manual input OR connected */}
                 <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-blue-500/60" />
+                        <div className="w-2 h-2 rounded-full bg-blue-500/60 flex-shrink-0" />
                         <span className="text-xs text-white/30">system_prompt</span>
                         {connectedHandles.includes("system_prompt") && (
                             <span className="text-xs text-blue-400/60 ml-auto">connected</span>
                         )}
                     </div>
+                    {!connectedHandles.includes("system_prompt") && (
+                        <textarea
+                            value={(data.systemPrompt as string) || ""}
+                            onChange={(e) => updateNode(id, { systemPrompt: e.target.value })}
+                            placeholder="Optional system instructions..."
+                            rows={2}
+                            className="w-full bg-[#111111] border border-white/5 rounded-lg px-2 py-1.5 text-xs text-white placeholder-white/20 outline-none resize-none focus:border-white/20 transition-colors"
+                        />
+                    )}
+                </div>
+
+                {/* User Message — manual input OR connected */}
+                <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-blue-500/60" />
+                        <div className="w-2 h-2 rounded-full bg-blue-500/60 flex-shrink-0" />
                         <span className="text-xs text-white/30">user_message</span>
                         {connectedHandles.includes("user_message") && (
                             <span className="text-xs text-blue-400/60 ml-auto">connected</span>
                         )}
                     </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-green-500/60" />
-                        <span className="text-xs text-white/30">images (multi)</span>
-                        {connectedHandles.includes("images") && (
-                            <span className="text-xs text-green-400/60 ml-auto">connected</span>
-                        )}
-                    </div>
+                    {!connectedHandles.includes("user_message") && (
+                        <textarea
+                            value={(data.userMessage as string) || ""}
+                            onChange={(e) => updateNode(id, { userMessage: e.target.value })}
+                            placeholder="Enter your message..."
+                            rows={3}
+                            className="w-full bg-[#111111] border border-white/5 rounded-lg px-2 py-1.5 text-xs text-white placeholder-white/20 outline-none resize-none focus:border-white/20 transition-colors"
+                        />
+                    )}
                 </div>
 
-                {/* Status */}
+                {/* Images handle label */}
+                <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-green-500/60 flex-shrink-0" />
+                    <span className="text-xs text-white/30">images (multi)</span>
+                    {connectedHandles.includes("images") && (
+                        <span className="text-xs text-green-400/60 ml-auto">connected</span>
+                    )}
+                </div>
+
+                {/* ── Running state ── */}
                 {status === "running" && (
                     <div className="flex items-center gap-2 bg-purple-500/10 rounded-lg px-3 py-2">
                         <div className="w-3 h-3 border-2 border-purple-500/40 border-t-purple-500 rounded-full animate-spin" />
-                        <span className="text-xs text-purple-400">Processing...</span>
+                        <span className="text-xs text-purple-400">Processing via Trigger.dev...</span>
                     </div>
                 )}
 
-                {/* Output */}
+                {/* ── Output ── */}
                 {output && status === "success" && (
-                    <div className="bg-[#111111] border border-green-500/20 rounded-lg p-2.5 max-h-32 overflow-y-auto">
-                        <p className="text-xs text-white/60 leading-relaxed">
+                    <div className="bg-[#111111] border border-green-500/20 rounded-lg p-2.5 max-h-40 overflow-y-auto">
+                        <p className="text-xs text-white/60 leading-relaxed whitespace-pre-wrap">
                             {typeof output === "string" ? output : JSON.stringify(output)}
                         </p>
                     </div>
                 )}
 
-                {/* Error */}
+                {/* ── Error ── */}
                 {error && status === "failed" && (
                     <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
                         <p className="text-xs text-red-400">{error}</p>
@@ -170,7 +199,7 @@ export default function LLMNode({ id, data }: NodeProps) {
                 )}
             </div>
 
-            {/* Output Handle */}
+            {/* ── Output Handle ── */}
             <Handle
                 type="source"
                 position={Position.Right}
