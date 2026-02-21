@@ -24,8 +24,7 @@ export async function GET(req: Request) {
             run.status === "FAILED" ||
             run.status === "CRASHED" ||
             run.status === "CANCELED" ||
-            run.status === "SYSTEM_FAILURE" ||
-            run.status === "INTERRUPTED" ||
+            run.status === "TIMED_OUT" ||
             run.status === "EXPIRED"
         ) {
             return NextResponse.json({
@@ -34,7 +33,6 @@ export async function GET(req: Request) {
             })
         }
 
-        // Still running: QUEUED, EXECUTING, WAITING_FOR_DEPLOY, REATTEMPTING, etc.
         return NextResponse.json({ status: "PENDING" })
     } catch (err: any) {
         console.error("Poll error:", err)
