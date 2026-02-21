@@ -33,13 +33,28 @@ async function uploadToTransloadit(fileBuffer: Buffer, fileName: string, mimeTyp
 
 export const extractFrameTask = task({
   id: "extract-frame-task",
-  retry: { maxAttempts: 2 },
+  retry: { maxAttempts: 1 }, // reduce retries since bad input won't fix itself
   run: async (payload: { videoUrl: string; timestamp: string }) => {
+    // ── Guard: validate URL before doing anything ──
+    if (!payload.videoUrl || typeof payload.videoUrl !== "string" || payload.videoUrl.trim() === "") {
+      throw new Error("video_url is required but was empty or missing. Make sure the Upload Video node has a video uploaded and is connected.")
+    }
+
+    // Validate it's an actual URL
+    try {
+      new URL(payload.videoUrl)
+    } catch {
+      throw new Error(`Invalid video_url: "${payload.videoUrl}" is not a valid URL.`)
+    }
+
     const tmpDir = os.tmpdir()
     const inputPath = path.join(tmpDir, `input-${Date.now()}.mp4`)
     const outputPath = path.join(tmpDir, `frame-${Date.now()}.jpg`)
 
     const res = await fetch(payload.videoUrl)
+    if (!res.ok) {
+      throw new Error(`Failed to fetch video from URL: ${res.status} ${res.statusText}`)
+    }
     const buffer = Buffer.from(await res.arrayBuffer())
     fs.writeFileSync(inputPath, buffer)
 
@@ -69,8 +84,10 @@ export const extractFrameTask = task({
     })
 
     const outputBuffer = fs.readFileSync(outputPath)
-    fs.unlinkSync(inputPath)
-    fs.unlinkSync(outputPath)
+
+    // Cleanup temp files
+    try { fs.unlinkSync(inputPath) } catch { }
+    try { fs.unlinkSync(outputPath) } catch { }
 
     const url = await uploadToTransloadit(outputBuffer, "frame.jpg", "image/jpeg")
     return { output: url }
