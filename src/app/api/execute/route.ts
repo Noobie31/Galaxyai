@@ -19,7 +19,7 @@ async function uploadToTransloadit(fileBuffer: Buffer, fileName: string, mimeTyp
 
   const formData = new FormData()
   formData.append("params", params)
-  formData.append("file", new Blob([fileBuffer], { type: mimeType }), fileName)
+  formData.append("file", new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), fileName)
 
   const res = await fetch("https://api2.transloadit.com/assemblies", { method: "POST", body: formData })
   const result = await res.json()
@@ -251,3 +251,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
+

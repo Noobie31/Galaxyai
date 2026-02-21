@@ -33,7 +33,7 @@ export async function POST(req: Request) {
     transloaditFormData.append("params", params)
     transloaditFormData.append(
       "file",
-      new Blob([buffer], { type: file.type }),
+      new Blob([new Uint8Array(buffer)], { type: file.type }),
       file.name
     )
 
@@ -107,3 +107,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
+
