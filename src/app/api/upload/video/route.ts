@@ -5,15 +5,12 @@ export const maxDuration = 60
 
 export async function POST(req: Request) {
   const { userId } = await auth()
-  if (!userId)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   try {
     const formData = await req.formData()
     const file = formData.get("file") as File
-
-    if (!file)
-      return NextResponse.json({ error: "No file provided" }, { status: 400 })
+    if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 })
 
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
@@ -23,58 +20,45 @@ export async function POST(req: Request) {
       steps: { ":original": { robot: "/upload/handle" } },
     })
 
-    const transloaditFormData = new FormData()
-    transloaditFormData.append("params", params)
-    transloaditFormData.append("file", new Blob([buffer], { type: file.type }), file.name)
+    const tFormData = new FormData()
+    tFormData.append("params", params)
+    tFormData.append("file", new Blob([new Uint8Array(buffer)], { type: file.type }), file.name)
 
-    const res = await fetch("https://api2.transloadit.com/assemblies", {
-      method: "POST",
-      body: transloaditFormData,
-    })
-
+    const res = await fetch("https://api2.transloadit.com/assemblies", { method: "POST", body: tFormData })
     const result = await res.json()
-    console.log("Transloadit video initial:", result.ok)
 
     const extractUrl = (r: any): string | null => {
-      if (r.uploads?.length > 0) {
-        return r.uploads[0].ssl_url || r.uploads[0].url || null
-      }
+      if (r.uploads?.length > 0) return r.uploads[0].ssl_url || r.uploads[0].url || null
       for (const key of Object.keys(r.results || {})) {
-        if (r.results[key]?.[0]?.ssl_url) return r.results[key][0].ssl_url
-        if (r.results[key]?.[0]?.url) return r.results[key][0].url
+        const items = r.results[key]
+        if (items?.length > 0) return items[0].ssl_url || items[0].url || null
       }
       return null
     }
 
-    if (result.ok === "ASSEMBLY_COMPLETED") {
-      const url = extractUrl(result)
-      if (url) return NextResponse.json({ url })
-    }
+    // Poll assembly until done
+    const assemblyUrl = result.assembly_ssl_url || result.assembly_url
+    if (!assemblyUrl) return NextResponse.json({ error: "No assembly URL" }, { status: 500 })
 
-    if (result.assembly_ssl_url) {
-      for (let i = 0; i < 30; i++) {
-        await new Promise((r) => setTimeout(r, 2000))
-        const pollRes = await fetch(result.assembly_ssl_url)
-        const pollResult = await pollRes.json()
-        console.log("Video poll", i, pollResult.ok)
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 1500))
+      const poll = await (await fetch(assemblyUrl)).json()
+      console.log(`Video poll ${i}: ${poll.ok}, uploads: ${poll.uploads?.length}, results keys: ${Object.keys(poll.results || {}).join(",")}`)
 
-        if (pollResult.ok === "ASSEMBLY_COMPLETED") {
-          const url = extractUrl(pollResult)
-          if (url) return NextResponse.json({ url })
-          console.log("Completed but no URL, uploads:", JSON.stringify(pollResult.uploads))
-          console.log("Results keys:", Object.keys(pollResult.results || {}))
-          return NextResponse.json({ error: "No URL in completed assembly" }, { status: 500 })
-        }
-
-        if (pollResult.ok === "ASSEMBLY_FAILED") {
-          return NextResponse.json({ error: pollResult.error || "Assembly failed" }, { status: 500 })
-        }
+      if (poll.ok === "ASSEMBLY_COMPLETED") {
+        const url = extractUrl(poll)
+        if (url) return NextResponse.json({ url })
+        // If no URL in results, the file is in uploads array
+        console.log("Full uploads:", JSON.stringify(poll.uploads?.slice(0,2)))
+        console.log("Full results:", JSON.stringify(poll.results))
+        return NextResponse.json({ error: "Assembly complete but no URL found" }, { status: 500 })
       }
+      if (poll.ok === "ASSEMBLY_FAILED") return NextResponse.json({ error: poll.error }, { status: 500 })
     }
 
     return NextResponse.json({ error: "Upload timed out" }, { status: 500 })
   } catch (err: any) {
-    console.error("Video upload error:", err.message)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
+

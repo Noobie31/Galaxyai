@@ -61,7 +61,7 @@ export const cropImageTask = task({
         formData.append("params", params)
         formData.append(
             "file",
-            new Blob([fileBuffer], { type: "image/jpeg" }),
+            new Blob([new Uint8Array(fileBuffer)], { type: "image/jpeg" }),
             "cropped.jpg"
         )
 
@@ -78,3 +78,4 @@ export const cropImageTask = task({
         return url
     },
 })
+
