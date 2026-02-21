@@ -45,7 +45,7 @@ export const extractFrameTask = task({
       throw new Error("video_url is required but was empty or missing. Make sure the Upload Video node has a video uploaded and is connected.")
     }
 
-    // Validate it's an actual URL
+    // Validate it's an actual URLd
     try {
       new URL(payload.videoUrl)
     } catch {
