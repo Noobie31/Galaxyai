@@ -8,6 +8,7 @@ import {
 import "@xyflow/react/dist/style.css"
 import { useWorkflowStore } from "@/store/workflowStore"
 import { useHistoryStore } from "@/store/historyStore"
+import { useCanvasToolStore } from "@/store/canvasToolStore"
 import { validateConnection, hasCycle } from "@/lib/type-validator"
 import TextNode from "@/components/nodes/TextNode"
 import ImageUploadNode from "@/components/nodes/ImageUploadNode"
@@ -32,53 +33,76 @@ const defaultData: Record<string, any> = {
   textNode: { label: "Text", text: "", status: "idle" },
   imageUploadNode: { label: "Upload Image", status: "idle" },
   videoUploadNode: { label: "Upload Video", status: "idle" },
-  llmNode: { label: "Run Any LLM", model: "gemini-2.5-flash", status: "idle", connectedHandles: [] },
+  llmNode: { label: "Run Any LLM", model: "gemini-2.0-flash", status: "idle", connectedHandles: [] },
   cropImageNode: { label: "Crop Image", xPercent: 0, yPercent: 0, widthPercent: 100, heightPercent: 100, connectedHandles: [], status: "idle" },
   extractFrameNode: { label: "Extract Frame", timestamp: "0", connectedHandles: [], status: "idle" },
 }
 
-export default function WorkflowCanvas() {
+function getDownstreamNodes(startIds: string[], edges: any[]): string[] {
+  const visited = new Set<string>(startIds)
+  const queue = [...startIds]
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    edges.forEach((edge) => {
+      if (edge.source === current && !visited.has(edge.target)) {
+        visited.add(edge.target)
+        queue.push(edge.target)
+      }
+    })
+  }
+  return Array.from(visited)
+}
+
+interface Props {
+  onHistoryToggle: () => void
+}
+
+export default function WorkflowCanvas({ onHistoryToggle }: Props) {
   const { nodes, edges, setNodes, setEdges, updateNode } = useWorkflowStore()
   const { pushHistory } = useHistoryStore()
+  const { activeTool } = useCanvasToolStore()
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; selectedIds: string[] } | null>(null)
 
+  // Safely get arrays - guard against undefined during hydration
+  const safeNodes = nodes ?? []
+  const safeEdges = edges ?? []
+
   const onNodesChange = useCallback(
-    (changes: any) => setNodes(applyNodeChanges(changes, nodes)),
-    [nodes, setNodes]
+    (changes: any) => setNodes(applyNodeChanges(changes, safeNodes)),
+    [safeNodes, setNodes]
   )
 
   const onEdgesChange = useCallback(
-    (changes: any) => setEdges(applyEdgeChanges(changes, edges)),
-    [edges, setEdges]
+    (changes: any) => setEdges(applyEdgeChanges(changes, safeEdges)),
+    [safeEdges, setEdges]
   )
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      // Type validation
-      if (!validateConnection(connection, nodes)) return
-      // Cycle detection
-      if (hasCycle(nodes, edges, { source: connection.source!, target: connection.target! })) {
+      if (!validateConnection(connection, safeNodes)) return
+      if (hasCycle(safeNodes, safeEdges, { source: connection.source!, target: connection.target! })) {
         console.warn("Cycle detected - connection rejected")
         return
       }
-      pushHistory({ nodes, edges })
+      pushHistory({ nodes: safeNodes, edges: safeEdges })
       const newEdge = {
         ...connection,
         id: uuidv4(),
+        type: "default",       // ← curved bezier (default ReactFlow edge type)
         animated: true,
         style: { stroke: "#a855f7", strokeWidth: 2 },
       }
-      setEdges(addEdge(newEdge, edges as any[]) as any)
+      setEdges(addEdge(newEdge, safeEdges as any[]) as any)
       if (connection.target && connection.targetHandle) {
-        const targetNode = nodes.find((n) => n.id === connection.target)
+        const targetNode = safeNodes.find((n) => n.id === connection.target)
         const existing = (targetNode?.data?.connectedHandles as string[]) || []
         if (!existing.includes(connection.targetHandle)) {
           updateNode(connection.target, { connectedHandles: [...existing, connection.targetHandle] })
         }
       }
     },
-    [nodes, edges, setEdges, pushHistory, updateNode]
+    [safeNodes, safeEdges, setEdges, pushHistory, updateNode]
   )
 
   const onDrop = useCallback(
@@ -88,13 +112,13 @@ export default function WorkflowCanvas() {
       if (!type || !reactFlowWrapper.current) return
       const bounds = reactFlowWrapper.current.getBoundingClientRect()
       const position = { x: e.clientX - bounds.left, y: e.clientY - bounds.top }
-      pushHistory({ nodes, edges })
+      pushHistory({ nodes: safeNodes, edges: safeEdges })
       setNodes([
-        ...nodes,
+        ...safeNodes,
         { id: uuidv4(), type, position, data: defaultData[type] || { label: type, status: "idle" } },
       ])
     },
-    [nodes, edges, setNodes, pushHistory]
+    [safeNodes, safeEdges, setNodes, pushHistory]
   )
 
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -106,7 +130,7 @@ export default function WorkflowCanvas() {
     (deletedEdges: any[]) => {
       deletedEdges.forEach((edge) => {
         if (edge.target && edge.targetHandle) {
-          const targetNode = nodes.find((n) => n.id === edge.target)
+          const targetNode = safeNodes.find((n) => n.id === edge.target)
           if (targetNode) {
             const updated = ((targetNode.data?.connectedHandles as string[]) || []).filter(
               (h) => h !== edge.targetHandle
@@ -116,18 +140,14 @@ export default function WorkflowCanvas() {
         }
       })
     },
-    [nodes, updateNode]
+    [safeNodes, updateNode]
   )
 
   const onSelectionContextMenu = useCallback(
     (e: React.MouseEvent, selectedNodes: any[]) => {
       e.preventDefault()
-      if (selectedNodes.length > 1) {
-        setContextMenu({
-          x: e.clientX,
-          y: e.clientY,
-          selectedIds: selectedNodes.map((n) => n.id),
-        })
+      if (selectedNodes.length > 0) {
+        setContextMenu({ x: e.clientX, y: e.clientY, selectedIds: selectedNodes.map((n) => n.id) })
       }
     },
     []
@@ -138,15 +158,27 @@ export default function WorkflowCanvas() {
     const { workflowId } = useWorkflowStore.getState()
     if (!workflowId) return
     const { runSelectedNodes } = await import("@/lib/execution-engine")
-    runSelectedNodes(workflowId, contextMenu.selectedIds, nodes, edges)
+    runSelectedNodes(workflowId, contextMenu.selectedIds, safeNodes, safeEdges)
     setContextMenu(null)
   }
 
+  const runFromHere = async () => {
+    if (!contextMenu) return
+    const { workflowId } = useWorkflowStore.getState()
+    if (!workflowId) return
+    const downstreamIds = getDownstreamNodes(contextMenu.selectedIds, safeEdges)
+    const { runSelectedNodes } = await import("@/lib/execution-engine")
+    runSelectedNodes(workflowId, downstreamIds, safeNodes, safeEdges)
+    setContextMenu(null)
+  }
+
+  const isPanMode = activeTool === "pan"
+
   return (
-    <div ref={reactFlowWrapper} className="w-full h-full" onClick={() => setContextMenu(null)}>
+    <div ref={reactFlowWrapper} style={{ width: "100%", height: "100%" }} onClick={() => setContextMenu(null)}>
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={safeNodes}
+        edges={safeEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -159,84 +191,86 @@ export default function WorkflowCanvas() {
         fitView
         deleteKeyCode={["Delete", "Backspace"]}
         multiSelectionKeyCode="Shift"
-        className="bg-[#0a0a0a]"
+        panOnDrag={isPanMode ? true : [1, 2]}
+        selectionOnDrag={!isPanMode}
+        panOnScroll={false}
+        style={{ background: "#0a0a0a" }}
         defaultEdgeOptions={{
+          type: "default",   // curved bezier edges
           animated: true,
           style: { stroke: "#a855f7", strokeWidth: 2 },
         }}
+        proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#ffffff15" />
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#ffffff12" />
         <MiniMap
-          className="!bg-[#111111] !border-white/10"
-          nodeColor="#333333"
-          maskColor="rgba(0,0,0,0.7)"
+          style={{
+            background: "#111",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 12,
+          }}
+          nodeColor="#2a2a2a"
+          maskColor="rgba(0,0,0,0.6)"
         />
-        <CanvasToolbar />
+        {/* Pass onHistoryToggle so toolbar header can toggle right sidebar */}
+        <CanvasToolbar onHistoryToggle={onHistoryToggle} />
       </ReactFlow>
 
-      {/* Right-click context menu for multi-selected nodes */}
+      {/* Empty state */}
+      {safeNodes.length === 0 && (
+        <div style={{
+          position: "absolute", inset: 0, top: 48,
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center",
+          pointerEvents: "none", zIndex: 5,
+        }}>
+          <p style={{ fontSize: 16, fontWeight: 500, color: "rgba(255,255,255,0.25)", margin: "0 0 6px" }}>
+            Add a node
+          </p>
+          <p style={{ fontSize: 13, color: "rgba(255,255,255,0.18)", margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+            Click + or drag from the left sidebar
+          </p>
+        </div>
+      )}
+
+      {/* Context menu */}
       {contextMenu && (
         <div
           style={{
-            position: "fixed",
-            left: contextMenu.x,
-            top: contextMenu.y,
-            background: "#1a1a1a",
-            border: "1px solid rgba(255,255,255,0.1)",
-            borderRadius: 10,
-            padding: 6,
-            zIndex: 1000,
-            minWidth: 180,
-            boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+            position: "fixed", left: contextMenu.x, top: contextMenu.y,
+            background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 12, padding: 6, zIndex: 1000, minWidth: 190,
+            boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
           }}
+          onClick={(e) => e.stopPropagation()}
         >
-          <div
-            style={{
-              padding: "4px 8px 8px",
-              fontSize: 10,
-              color: "rgba(255,255,255,0.3)",
-              fontWeight: 600,
-            }}
-          >
-            {contextMenu.selectedIds.length} NODES SELECTED
+          <div style={{ padding: "4px 10px 8px", fontSize: 10, color: "rgba(255,255,255,0.25)", fontWeight: 600, letterSpacing: "0.05em" }}>
+            {contextMenu.selectedIds.length} NODE{contextMenu.selectedIds.length > 1 ? "S" : ""} SELECTED
           </div>
-
-          <button
-            onClick={runSelected}
-            style={{
-              display: "flex", alignItems: "center", gap: 8, width: "100%",
-              background: "rgba(212,245,122,0.1)", border: "1px solid rgba(212,245,122,0.2)",
-              borderRadius: 7, padding: "8px 12px", cursor: "pointer",
-              color: "#d4f57a", fontSize: 12, fontWeight: 600,
-            }}
+          <button onClick={runSelected} style={{
+            display: "flex", alignItems: "center", gap: 8, width: "100%",
+            background: "rgba(212,245,122,0.08)", border: "1px solid rgba(212,245,122,0.15)",
+            borderRadius: 8, padding: "8px 12px", cursor: "pointer",
+            color: "#d4f57a", fontSize: 12, fontWeight: 600,
+          }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(212,245,122,0.15)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(212,245,122,0.08)")}
           >
-            <Play size={12} fill="#d4f57a" />
-            Run Selected Nodes
+            <Play size={12} fill="#d4f57a" /> Run Selected Nodes
           </button>
-
-          <button
-            onClick={() => {
-              const { workflowId } = useWorkflowStore.getState()
-              if (workflowId) {
-                import("@/lib/execution-engine").then(({ runSelectedNodes }) => {
-                  runSelectedNodes(workflowId, contextMenu.selectedIds, nodes, edges)
-                })
-              }
-              setContextMenu(null)
-            }}
-            style={{
-              display: "flex", alignItems: "center", gap: 8, width: "100%",
-              background: "none", border: "none", marginTop: 4,
-              borderRadius: 7, padding: "8px 12px", cursor: "pointer",
-              color: "rgba(255,255,255,0.5)", fontSize: 12,
-            }}
+          <button onClick={runFromHere} style={{
+            display: "flex", alignItems: "center", gap: 8, width: "100%",
+            background: "none", border: "none", marginTop: 4,
+            borderRadius: 8, padding: "8px 12px", cursor: "pointer",
+            color: "rgba(255,255,255,0.45)", fontSize: 12,
+          }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.color = "rgba(255,255,255,0.7)" }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "rgba(255,255,255,0.45)" }}
           >
-            <Zap size={12} />
-            Run from here
+            <Zap size={12} /> Run from here (+ downstream)
           </button>
         </div>
       )}
     </div>
   )
 }
-

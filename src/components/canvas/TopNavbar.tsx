@@ -1,10 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import { useWorkflowStore } from "@/store/workflowStore"
 import { useExecutionStore } from "@/store/executionStore"
-import { ArrowLeft, FolderOpen, Share2, Save, Play, Download, Check } from "lucide-react"
+import { Play, Share2, Check, Moon } from "lucide-react"
+import LogoDropdown from "@/components/canvas/LogoDropdown"
+import KeyboardShortcutsModal from "@/components/canvas/KeyboardShortcutsModal"
 
 interface Props {
   workflowId: string
@@ -12,55 +13,13 @@ interface Props {
 }
 
 export default function TopNavbar({ workflowId, saveWorkflow }: Props) {
-  const router = useRouter()
   const { isRunning } = useExecutionStore()
   const { workflowName, setWorkflowName, nodes, edges, isSaving } = useWorkflowStore()
   const [isEditingName, setIsEditingName] = useState(false)
-  const [saveFeedback, setSaveFeedback] = useState(false)
   const [shareFeedback, setShareFeedback] = useState(false)
-
-  const handleOpen = () => {
-    const input = document.createElement("input")
-    input.type = "file"
-    input.accept = ".json"
-    input.onchange = (e: any) => {
-      const file = e.target.files[0]
-      if (!file) return
-      const reader = new FileReader()
-      reader.onload = (ev) => {
-        try {
-          const data = JSON.parse(ev.target?.result as string)
-          if (data.nodes && data.edges) {
-            useWorkflowStore.getState().setNodes(data.nodes)
-            useWorkflowStore.getState().setEdges(data.edges)
-          }
-        } catch { alert("Invalid JSON file") }
-      }
-      reader.readAsText(file)
-    }
-    input.click()
-  }
-
-  const handleExport = () => {
-    const { nodes, edges, workflowName } = useWorkflowStore.getState()
-    const data = JSON.stringify({ nodes, edges }, null, 2)
-    const blob = new Blob([data], { type: "application/json" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = `${workflowName || "workflow"}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  const handleSave = async () => {
-    await saveWorkflow()
-    setSaveFeedback(true)
-    setTimeout(() => setSaveFeedback(false), 2000)
-  }
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   const handleShare = async () => {
-    // Copy current URL to clipboard - workflow is already saved to DB so URL is shareable
     await navigator.clipboard.writeText(window.location.href)
     setShareFeedback(true)
     setTimeout(() => setShareFeedback(false), 2000)
@@ -72,100 +31,188 @@ export default function TopNavbar({ workflowId, saveWorkflow }: Props) {
     runWorkflow(workflowId, nodes, edges, "full")
   }
 
-  const navBtnStyle: React.CSSProperties = {
-    display: "flex", alignItems: "center", gap: 5,
-    background: "rgba(255,255,255,0.05)",
-    color: "rgba(255,255,255,0.6)",
-    border: "1px solid rgba(255,255,255,0.1)",
-    borderRadius: 8, cursor: "pointer",
-    padding: "4px 10px", fontSize: 11, fontWeight: 500,
-    flexShrink: 0, whiteSpace: "nowrap" as const,
+  // Ctrl+S to save
+  if (typeof window !== "undefined") {
+    // handled via useEffect in WorkflowClient
   }
 
   return (
-    <div style={{
-      height: 44, minHeight: 44,
-      display: "flex", alignItems: "center",
-      padding: "0 16px", gap: 8,
-      background: "#111111",
-      borderBottom: "1px solid rgba(255,255,255,0.06)",
-      zIndex: 50, flexShrink: 0,
-    }}>
-      {/* Back */}
-      <button onClick={() => router.push("/dashboard")} style={{
-        width: 28, height: 28, borderRadius: 8, border: "none", cursor: "pointer",
-        background: "rgba(147,51,234,0.3)", display: "flex",
-        alignItems: "center", justifyContent: "center", flexShrink: 0,
+    <>
+      <div style={{
+        height: 48, minHeight: 48,
+        display: "flex", alignItems: "center",
+        justifyContent: "space-between",
+        padding: "0 12px",
+        background: "#0a0a0a",
+        borderBottom: "1px solid rgba(255,255,255,0.06)",
+        zIndex: 50, flexShrink: 0,
       }}>
-        <ArrowLeft size={14} color="#c084fc" />
-      </button>
+        {/* Left: Logo dropdown + workflow name */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <LogoDropdown workflowName={workflowName} />
 
-      {/* Workflow name */}
-      {isEditingName ? (
-        <input
-          autoFocus
-          value={workflowName}
-          onChange={(e) => setWorkflowName(e.target.value)}
-          onBlur={() => setIsEditingName(false)}
-          onKeyDown={(e) => { if (e.key === "Enter") setIsEditingName(false) }}
-          style={{
-            background: "rgba(255,255,255,0.1)", color: "white",
-            border: "1px solid rgba(255,255,255,0.2)", borderRadius: 6,
-            padding: "2px 8px", fontSize: 13, fontWeight: 600, outline: "none", width: 160,
-          }}
-        />
-      ) : (
-        <button onClick={() => setIsEditingName(true)} style={{
-          background: "none", border: "none", cursor: "pointer",
-          color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: 600, padding: 0,
-        }}>
-          {workflowName}
-        </button>
-      )}
+          <span style={{ color: "rgba(255,255,255,0.15)", fontSize: 16, lineHeight: 1 }}>›</span>
 
-      <div style={{ flex: 1 }} />
+          {/* Workflow name */}
+          {isEditingName ? (
+            <input
+              autoFocus
+              value={workflowName}
+              onChange={(e) => setWorkflowName(e.target.value)}
+              onBlur={() => setIsEditingName(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") setIsEditingName(false)
+                if (e.key === "Escape") setIsEditingName(false)
+              }}
+              style={{
+                background: "rgba(255,255,255,0.08)",
+                color: "white",
+                border: "1px solid rgba(255,255,255,0.2)",
+                borderRadius: 6,
+                padding: "3px 8px",
+                fontSize: 14, fontWeight: 500,
+                outline: "none", width: 200,
+              }}
+            />
+          ) : (
+            <button
+              onClick={() => setIsEditingName(true)}
+              style={{
+                display: "flex", alignItems: "center", gap: 4,
+                background: "none", border: "none",
+                cursor: "pointer",
+                color: "rgba(255,255,255,0.85)",
+                fontSize: 14, fontWeight: 500,
+                padding: "4px 6px", borderRadius: 6,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            >
+              {workflowName}
+            </button>
+          )}
 
-      {/* OPEN */}
-      <button onClick={handleOpen} style={navBtnStyle}>
-        <FolderOpen size={12} /> OPEN
-      </button>
+          {isSaving && (
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)" }}>
+              Saving...
+            </span>
+          )}
+        </div>
 
-      {/* EXPORT */}
-      <button onClick={handleExport} style={navBtnStyle}>
-        <Download size={12} /> EXPORT
-      </button>
+        {/* Right: actions */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {/* Dark mode toggle */}
+          <button
+            style={{
+              width: 32, height: 32,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "none", border: "none", cursor: "pointer",
+              borderRadius: 8, color: "rgba(255,255,255,0.4)",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+            title="Toggle theme"
+          >
+            <Moon size={15} />
+          </button>
 
-      {/* SHARE - copies URL */}
-      <button onClick={handleShare} style={{
-        ...navBtnStyle,
-        color: shareFeedback ? "#4ade80" : "rgba(255,255,255,0.6)",
-        borderColor: shareFeedback ? "rgba(74,222,128,0.3)" : "rgba(255,255,255,0.1)",
-      }}>
-        {shareFeedback ? <Check size={12} /> : <Share2 size={12} />}
-        {shareFeedback ? "COPIED!" : "SHARE"}
-      </button>
+          {/* Share */}
+          <button
+            onClick={handleShare}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: shareFeedback ? "#4ade80" : "rgba(255,255,255,0.55)",
+              fontSize: 13, fontWeight: 500,
+              padding: "5px 10px", borderRadius: 8,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+          >
+            {shareFeedback ? <Check size={13} /> : (
+              // Diamond/share icon like Krea
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M11 4.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM3 8.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM11 12.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M4.5 7.5L9.5 10M9.5 4L4.5 6.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+            )}
+            {shareFeedback ? "Copied!" : "Share"}
+          </button>
 
-      {/* SAVE */}
-      <button onClick={handleSave} disabled={isSaving} style={{
-        ...navBtnStyle,
-        color: saveFeedback ? "#4ade80" : "rgba(255,255,255,0.6)",
-        borderColor: saveFeedback ? "rgba(74,222,128,0.3)" : "rgba(255,255,255,0.1)",
-      }}>
-        {saveFeedback ? <Check size={12} /> : <Save size={12} />}
-        {isSaving ? "SAVING..." : saveFeedback ? "SAVED!" : "SAVE"}
-      </button>
+          {/* Run */}
+          <button
+            onClick={handleRun}
+            disabled={isRunning}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: isRunning ? "rgba(255,255,255,0.08)" : "white",
+              color: isRunning ? "rgba(255,255,255,0.35)" : "black",
+              border: "none", borderRadius: 8,
+              cursor: isRunning ? "not-allowed" : "pointer",
+              padding: "6px 14px", fontSize: 13, fontWeight: 600,
+              transition: "all 0.15s",
+            }}
+          >
+            {isRunning ? (
+              <>
+                <div style={{
+                  width: 11, height: 11,
+                  border: "2px solid rgba(255,255,255,0.15)",
+                  borderTop: "2px solid rgba(255,255,255,0.5)",
+                  borderRadius: "50%",
+                  animation: "spin 0.7s linear infinite",
+                }} />
+                Running...
+              </>
+            ) : (
+              <>
+                <Play size={11} fill="black" />
+                Run
+              </>
+            )}
+          </button>
 
-      {/* RUN */}
-      <button onClick={handleRun} disabled={isRunning} style={{
-        display: "flex", alignItems: "center", gap: 6,
-        background: "#d4f57a", color: "black", border: "none",
-        borderRadius: 8, cursor: isRunning ? "not-allowed" : "pointer",
-        padding: "5px 16px", fontSize: 12, fontWeight: 700,
-        opacity: isRunning ? 0.6 : 1, flexShrink: 0,
-      }}>
-        <Play size={12} fill="black" />
-        {isRunning ? "RUNNING..." : "RUN"}
-      </button>
-    </div>
+          {/* Divider */}
+          <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.08)", margin: "0 4px" }} />
+
+          {/* Version history icon */}
+          <button
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: "rgba(255,255,255,0.06)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              cursor: "pointer", borderRadius: 8,
+              padding: "5px 10px",
+              color: "rgba(255,255,255,0.5)",
+              fontSize: 12,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.1)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
+            title="Version history"
+          >
+            {/* Clock icon */}
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M6.5 4v2.5l1.5 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+              <path d="M2 4l3.5 3.5L9 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Keyboard shortcuts modal */}
+      <KeyboardShortcutsModal
+        isOpen={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+      />
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
+    </>
   )
 }

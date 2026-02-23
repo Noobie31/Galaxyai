@@ -60,7 +60,7 @@ function resolveNodeInputs(nodeId: string, nodes: any[], edges: any[]): Record<s
 
     incomingEdges.forEach((edge) => {
         const sourceOutput = getNodeOutput(edge.source, nodes)
-        if (sourceOutput !== undefined && sourceOutput !== null && edge.targetHandle) {
+        if (sourceOutput !== undefined && sourceOutput !== null && sourceOutput !== "" && edge.targetHandle) {
             if (edge.targetHandle === "images") {
                 if (!inputs.images) inputs.images = []
                 if (Array.isArray(sourceOutput)) {
@@ -94,7 +94,6 @@ function resolveNodeInputs(nodeId: string, nodes: any[], edges: any[]): Record<s
 
     if (node.type === "llmNode") {
         inputs.model = nodeData.model || "gemini-2.0-flash"
-        // Fill manual text inputs only if handle not connected
         if (!inputs.system_prompt && nodeData.systemPrompt) {
             inputs.system_prompt = nodeData.systemPrompt
         }
@@ -106,13 +105,18 @@ function resolveNodeInputs(nodeId: string, nodes: any[], edges: any[]): Record<s
     return inputs
 }
 
+// Check if any direct dependency (upstream node) has failed
+function hasDependencyFailed(nodeId: string, edges: any[], failedNodes: Set<string>): boolean {
+    const incomingEdges = edges.filter((e) => e.target === nodeId)
+    return incomingEdges.some((edge) => failedNodes.has(edge.source))
+}
+
 // Poll a Trigger.dev run until completion or failure
 async function pollRun(
     runId: string,
     nodeId: string,
-    timeoutMs = 300000 // 5 minutes
+    timeoutMs = 300000
 ): Promise<any> {
-    const { setNodeStatus, setNodeOutput, setNodeError } = useExecutionStore.getState()
     const startTime = Date.now()
 
     while (Date.now() - startTime < timeoutMs) {
@@ -132,8 +136,10 @@ async function pollRun(
 
             // PENDING — keep polling
         } catch (err: any) {
-            // Network error — retry
+            // Only re-throw if it's a task failure error or we're near timeout
+            if (err.message && err.message !== "Failed to fetch") throw err
             if (Date.now() - startTime > timeoutMs - 5000) throw err
+            // Network error — retry silently
         }
     }
 
@@ -146,8 +152,13 @@ async function executeNode(
     nodeType: string,
     inputs: Record<string, any>
 ): Promise<any> {
-    const { setNodeStatus, setNodeOutput, setNodeError, setNodeStartTime, setNodeDuration } =
-        useExecutionStore.getState()
+    const {
+        setNodeStatus,
+        setNodeOutput,
+        setNodeError,
+        setNodeStartTime,
+        setNodeDuration,
+    } = useExecutionStore.getState()
 
     // Passthrough nodes don't need API execution
     if (PASSTHROUGH_NODES.has(nodeType)) {
@@ -176,10 +187,8 @@ async function executeNode(
         let output: any
 
         if (result.pending && result.runId) {
-            // Trigger.dev task triggered — poll for result
             output = await pollRun(result.runId, nodeId)
         } else {
-            // Direct result (shouldn't happen with new route but handle gracefully)
             output = result.output
         }
 
@@ -247,16 +256,34 @@ export async function runWorkflow(
     const startTime = Date.now()
     const nodeResults: any[] = []
     let overallStatus = "success"
+    // Track which nodes have failed so downstream can be skipped
+    const failedNodes = new Set<string>()
 
     try {
         const levels = topologicalSort(nodes, edges)
 
         for (const level of levels) {
-            // Execute all nodes in this level in parallel
             await Promise.all(
                 level.map(async (nodeId) => {
                     const node = nodes.find((n) => n.id === nodeId)
                     if (!node) return
+
+                    // ✅ Skip node if any dependency failed
+                    if (hasDependencyFailed(nodeId, edges, failedNodes)) {
+                        failedNodes.add(nodeId)
+                        useExecutionStore.getState().setNodeStatus(nodeId, "failed")
+                        useExecutionStore.getState().setNodeError(nodeId, "Skipped: upstream dependency failed")
+                        overallStatus = "failed"
+                        nodeResults.push({
+                            nodeId,
+                            nodeType: node.type,
+                            status: "failed",
+                            inputs: {},
+                            error: "Skipped: upstream dependency failed",
+                            duration: 0,
+                        })
+                        return
+                    }
 
                     const inputs = resolveNodeInputs(nodeId, nodes, edges)
                     const nodeStart = Date.now()
@@ -273,6 +300,7 @@ export async function runWorkflow(
                         })
                     } catch (err: any) {
                         overallStatus = "failed"
+                        failedNodes.add(nodeId)
                         nodeResults.push({
                             nodeId,
                             nodeType: node.type,
@@ -293,17 +321,22 @@ export async function runWorkflow(
 }
 
 // Run a single node only
+// ✅ Fixed: does NOT reset all node states - preserves other nodes' results
 export async function runSingleNode(
     workflowId: string,
     nodeId: string,
     nodes: any[],
     edges: any[]
 ) {
-    const { setIsRunning, resetNodeStates } = useExecutionStore.getState()
-    resetNodeStates()
+    const { setIsRunning, setNodeStatus, setNodeError, setNodeOutput } = useExecutionStore.getState()
 
     const node = nodes.find((n) => n.id === nodeId)
     if (!node) return
+
+    // Only reset THIS node's state, not all nodes
+    setNodeStatus(nodeId, "idle")
+    setNodeError(nodeId, "")
+    setNodeOutput(nodeId, undefined)
 
     setIsRunning(true)
     const startTime = Date.now()
@@ -345,6 +378,8 @@ export async function runSelectedNodes(
     edges: any[]
 ) {
     const selectedNodes = nodes.filter((n) => selectedNodeIds.includes(n.id))
+    // Include edges where BOTH source and target are in selected set
+    // This ensures proper dependency resolution within the selection
     const selectedEdges = edges.filter(
         (e) => selectedNodeIds.includes(e.source) && selectedNodeIds.includes(e.target)
     )

@@ -5,6 +5,11 @@ export default defineConfig({
   maxDuration: 300,
   dirs: ["./src/trigger"],
   build: {
-    external: ["ffmpeg-static", "ffprobe-static"],
+    external: [
+      "ffmpeg-static",
+      "ffprobe-static",
+      "fluent-ffmpeg",
+      "sharp",
+    ],
   },
 })

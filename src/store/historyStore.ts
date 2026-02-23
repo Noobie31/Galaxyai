@@ -25,14 +25,13 @@ export const useHistoryStore = create<HistoryState>()(
         pushHistory: (entry) => set((state) => {
             state.past.push(entry)
             state.future = []
-            // Keep only last 50 history entries
             if (state.past.length > 50) {
                 state.past.shift()
             }
         }),
 
         undo: () => {
-            const { past, future } = get()
+            const { past } = get()
             if (past.length === 0) return null
 
             const previous = past[past.length - 1]

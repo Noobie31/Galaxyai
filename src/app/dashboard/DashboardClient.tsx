@@ -1,272 +1,673 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { UserButton } from "@clerk/nextjs"
-import { formatDistanceToNow } from "date-fns"
-import { Plus, LayoutGrid, List, Search, GitBranch, Users, AppWindow, MessageSquare, Zap } from "lucide-react"
+import { useUser, useClerk } from "@clerk/nextjs"
+import {
+  Plus, Search, ChevronDown, Moon, Sun,
+  Home, ImageIcon, Video, Pen, Type, Folder,
+  Clock, ExternalLink, Pencil, Copy, Trash2, LogOut, User,
+} from "lucide-react"
 
 interface Workflow {
   id: string
   name: string
   updatedAt: string
-  createdAt: string
-  userId: string
-  nodes: any
-  edges: any
+  nodes?: any[]
+  edges?: any[]
 }
 
-interface Props {
-  workflows: Workflow[]
-  userId: string
-}
-
-export default function DashboardClient({ workflows: initial }: Props) {
+export default function DashboardClient() {
   const router = useRouter()
-  const [workflows] = useState(initial)
-  const [search, setSearch] = useState("")
-  const [view, setView] = useState<"grid" | "list">("grid")
-  const [creating, setCreating] = useState(false)
-  const [activeTab, setActiveTab] = useState<"workflows" | "tutorials">("workflows")
+  const { user } = useUser()
+  const { signOut } = useClerk()
 
-  const filtered = workflows.filter((w) =>
-    w.name.toLowerCase().includes(search.toLowerCase())
-  )
+  const [workflows, setWorkflows] = useState<Workflow[]>([])
+  const [activeTab, setActiveTab] = useState("Projects")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [isCreating, setIsCreating] = useState(false)
+  const [isDark, setIsDark] = useState(true)
+
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; workflow: Workflow } | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState("")
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+
+  const contextRef = useRef<HTMLDivElement>(null)
+  const userMenuRef = useRef<HTMLDivElement>(null)
+
+  const tabs = ["Projects", "Apps", "Examples", "Templates"]
+
+  useEffect(() => { fetchWorkflows() }, [])
+
+  // Close menus on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (contextRef.current && !contextRef.current.contains(e.target as Node)) setContextMenu(null)
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) setUserMenuOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [])
+
+  const toggleDarkMode = () => {
+    const next = !isDark
+    setIsDark(next)
+    if (next) {
+      document.documentElement.classList.remove("light")
+      document.body.style.background = "#0a0a0a"
+      document.body.style.color = "white"
+    } else {
+      document.documentElement.classList.add("light")
+      document.body.style.background = "#f8f8f8"
+      document.body.style.color = "#111"
+    }
+  }
+
+  const bg = isDark ? "#0a0a0a" : "#f5f5f5"
+  const cardBg = isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.03)"
+  const cardBorder = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.1)"
+  const navBg = isDark ? "rgba(10,10,10,0.96)" : "rgba(248,248,248,0.96)"
+  const navBorder = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)"
+  const textPrimary = isDark ? "white" : "#111"
+  const textSecondary = isDark ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.45)"
+  const textMuted = isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.25)"
+
+  const fetchWorkflows = async () => {
+    try {
+      const res = await fetch("/api/workflows")
+      if (res.ok) setWorkflows(await res.json())
+    } catch (e) { console.error(e) }
+  }
 
   const createWorkflow = async () => {
-    setCreating(true)
+    setIsCreating(true)
     try {
       const res = await fetch("/api/workflows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "untitled" }),
+        body: JSON.stringify({ name: "Untitled" }),
       })
-      const data = await res.json()
-      if (data.id) router.push(`/workflow/${data.id}`)
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setCreating(false)
-    }
+      if (res.ok) router.push(`/workflow/${(await res.json()).id}`)
+    } finally { setIsCreating(false) }
   }
 
-  const loadSample = async () => {
-    setCreating(true)
+  const loadSampleWorkflow = async () => {
     try {
-      const res = await fetch("/api/seed-sample", { method: "POST" })
-      const data = await res.json()
-      if (data.id) router.push(`/workflow/${data.id}`)
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setCreating(false)
-    }
+      const res = await fetch("/api/workflows/sample", { method: "POST" })
+      if (res.ok) router.push(`/workflow/${(await res.json()).id}`)
+    } catch (e) { console.error(e) }
   }
 
-  const sampleWorkflows = [
-    { title: "Product Marketing Kit", color: "from-purple-500 to-pink-600" },
-    { title: "Image + LLM Pipeline", color: "from-blue-500 to-cyan-600" },
-    { title: "Video Frame Extract", color: "from-orange-500 to-red-600" },
-    { title: "Multi-Modal Analysis", color: "from-green-500 to-emerald-600" },
-    { title: "Content Generator", color: "from-yellow-500 to-orange-600" },
-    { title: "Image Crop + Describe", color: "from-slate-500 to-gray-700" },
-  ]
+  const deleteWorkflow = async (id: string) => {
+    try {
+      await fetch(`/api/workflows/${id}`, { method: "DELETE" })
+      setWorkflows((prev) => prev.filter((w) => w.id !== id))
+    } catch (e) { console.error(e) }
+    setContextMenu(null)
+  }
+
+  const duplicateWorkflow = async (wf: Workflow) => {
+    try {
+      const res = await fetch("/api/workflows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: `${wf.name} (copy)`, nodes: wf.nodes, edges: wf.edges }),
+      })
+      if (res.ok) fetchWorkflows()
+    } catch (e) { console.error(e) }
+    setContextMenu(null)
+  }
+
+  const renameWorkflow = async (id: string, name: string) => {
+    try {
+      await fetch(`/api/workflows/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      })
+      setWorkflows((prev) => prev.map((w) => w.id === id ? { ...w, name } : w))
+    } catch (e) { console.error(e) }
+    setRenamingId(null)
+  }
+
+  const filteredWorkflows = workflows.filter((w) =>
+    w.name.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const formatTime = (dateStr: string) => {
+    const diff = Date.now() - new Date(dateStr).getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return "Just now"
+    if (mins < 60) return `Edited ${mins}m ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24) return `Edited ${hrs}h ago`
+    return `Edited ${Math.floor(hrs / 24)}d ago`
+  }
+
+  const userInitial = user?.firstName?.[0] || user?.emailAddresses?.[0]?.emailAddress?.[0]?.toUpperCase() || "U"
+  const userEmail = user?.emailAddresses?.[0]?.emailAddress || ""
+  const userName = user?.fullName || user?.firstName || "User"
 
   return (
-    <div className="flex h-screen bg-[#0a0a0a] text-white overflow-hidden">
-      {/* Left Sidebar */}
-      <div className="w-52 flex-shrink-0 bg-[#0f0f0f] border-r border-white/5 flex flex-col">
-        <div className="p-3 border-b border-white/5">
-          <div className="flex items-center gap-2 mb-3">
-            <UserButton afterSignOutUrl="/sign-in" />
-            <span className="text-sm font-medium truncate">My Workspace</span>
-          </div>
-          <button
-            onClick={createWorkflow}
-            disabled={creating}
-            className="w-full flex items-center justify-center gap-2 bg-[#d4f57a] hover:bg-[#c8ec6a] text-black text-sm font-semibold py-2 px-3 rounded-lg transition-colors disabled:opacity-60"
-          >
-            <Plus size={14} />
-            {creating ? "Creating..." : "New Workflow"}
-          </button>
-          <button
-            onClick={loadSample}
-            disabled={creating}
-            className="w-full flex items-center justify-center gap-2 mt-2 border border-[#d4f57a]/30 hover:border-[#d4f57a]/60 text-[#d4f57a] text-sm font-medium py-2 px-3 rounded-lg transition-colors disabled:opacity-60"
-          >
-            <Zap size={14} />
-            Load Sample
-          </button>
-        </div>
-
-        <nav className="flex-1 p-2 space-y-1">
-          <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-white/10 text-sm font-medium">
-            <GitBranch size={16} />
-            My Files
-          </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-sm text-white/60 transition-colors">
-            <Users size={16} />
-            Shared
-          </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-sm text-white/60 transition-colors">
-            <AppWindow size={16} />
-            Apps
-          </button>
-        </nav>
-
-        <div className="p-3 border-t border-white/5">
-          <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/5 text-sm text-white/60 transition-colors">
-            <MessageSquare size={16} />
-            Discord
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between px-8 py-5 border-b border-white/5">
-          <h1 className="text-lg font-semibold">My Workspace</h1>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={loadSample}
-              disabled={creating}
-              className="flex items-center gap-2 border border-[#d4f57a]/30 hover:border-[#d4f57a]/60 text-[#d4f57a] text-sm font-medium py-2 px-4 rounded-lg transition-colors disabled:opacity-60"
-            >
-              <Zap size={14} />
-              Load Sample Workflow
-            </button>
-            <button
-              onClick={createWorkflow}
-              disabled={creating}
-              className="flex items-center gap-2 border border-white/20 hover:border-white/40 text-sm font-medium py-2 px-4 rounded-lg transition-colors disabled:opacity-60"
-            >
-              <Plus size={14} />
-              {creating ? "Creating..." : "Create New File"}
-            </button>
+    <div
+      style={{ minHeight: "100vh", background: bg, color: textPrimary, fontFamily: "system-ui, -apple-system, sans-serif" }}
+      onClick={() => setContextMenu(null)}
+    >
+      {/* ── TOP NAV ── */}
+      <nav style={{
+        position: "fixed", top: 0, left: 0, right: 0, zIndex: 100,
+        height: 52,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "0 20px",
+        background: navBg,
+        backdropFilter: "blur(12px)",
+        borderBottom: `1px solid ${navBorder}`,
+      }}>
+        {/* Left: Logo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 120 }}>
+          <div style={{
+            width: 28, height: 28,
+            background: isDark ? "white" : "#111",
+            borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+          }}>
+            <span style={{ color: isDark ? "black" : "white", fontWeight: 900, fontSize: 13 }}>N</span>
           </div>
         </div>
 
-        <div className="px-8 py-6">
-          {/* Workflow Library */}
-          <div className="bg-[#141414] rounded-xl p-4 mb-8 border border-white/5">
-            <div className="flex gap-4 mb-4">
-              <button
-                onClick={() => setActiveTab("workflows")}
-                className={`text-sm font-medium pb-1 border-b-2 transition-colors ${
-                  activeTab === "workflows"
-                    ? "border-white text-white"
-                    : "border-transparent text-white/40 hover:text-white/60"
-                }`}
-              >
-                Workflow library
-              </button>
-              <button
-                onClick={() => setActiveTab("tutorials")}
-                className={`text-sm font-medium pb-1 border-b-2 transition-colors ${
-                  activeTab === "tutorials"
-                    ? "border-white text-white"
-                    : "border-transparent text-white/40 hover:text-white/60"
-                }`}
-              >
-                Tutorials
-              </button>
-            </div>
-            <div className="flex gap-3 overflow-x-auto pb-2">
-              {sampleWorkflows.map((sw, i) => (
-                <div
-                  key={i}
-                  onClick={loadSample}
-                  className="flex-shrink-0 w-44 h-28 rounded-lg overflow-hidden relative cursor-pointer group"
+        {/* Center: icon tabs */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 1,
+          background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
+          borderRadius: 12, padding: "3px",
+          border: `1px solid ${isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.08)"}`,
+        }}>
+          {[
+            { icon: <Home size={15} />, label: "Home" },
+            { icon: <ImageIcon size={15} />, label: "Image" },
+            { icon: <Video size={15} />, label: "Video" },
+            { icon: <Pen size={15} />, label: "Enhancer" },
+            { icon: <Type size={15} />, label: "Edit" },
+            { icon: <Folder size={15} />, label: "Assets" },
+            {
+              icon: (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <circle cx="7" cy="7" r="2" /><circle cx="17" cy="7" r="2" />
+                  <circle cx="7" cy="17" r="2" /><circle cx="17" cy="17" r="2" />
+                  <path d="M9 7h6M7 9v6M17 9v6M9 17h6" />
+                </svg>
+              ),
+              label: "Nodes", active: true,
+            },
+          ].map((item) => (
+            <NavIconBtn key={item.label} {...item} isDark={isDark} textSecondary={textSecondary} />
+          ))}
+        </div>
+
+        {/* Right */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 120, justifyContent: "flex-end" }}>
+          {/* Search */}
+          <NavBtn isDark={isDark}><Search size={15} /></NavBtn>
+
+          {/* Dark mode toggle */}
+          <NavBtn isDark={isDark} onClick={toggleDarkMode} title={isDark ? "Switch to light mode" : "Switch to dark mode"}>
+            {isDark ? <Moon size={15} /> : <Sun size={15} />}
+          </NavBtn>
+
+          <button style={{
+            display: "flex", alignItems: "center", gap: 5,
+            background: "#2563eb", border: "none", borderRadius: 8,
+            padding: "6px 12px", color: "white", fontSize: 12, fontWeight: 600,
+            cursor: "pointer", whiteSpace: "nowrap",
+          }}>
+            ↑ Upgrade Now
+          </button>
+
+          {/* User avatar with dropdown */}
+          <div ref={userMenuRef} style={{ position: "relative" }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); setUserMenuOpen((v) => !v) }}
+              style={{
+                width: 30, height: 30, borderRadius: "50%",
+                background: "linear-gradient(135deg, #f59e0b, #ef4444)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 12, fontWeight: 700, color: "white",
+                cursor: "pointer", border: "none", flexShrink: 0,
+              }}
+            >
+              {userInitial}
+            </button>
+
+            {userMenuOpen && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 8px)", right: 0,
+                background: isDark ? "#1a1a1a" : "#fff",
+                border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)"}`,
+                borderRadius: 12, padding: 6, minWidth: 220,
+                boxShadow: "0 8px 32px rgba(0,0,0,0.5)", zIndex: 200,
+              }}>
+                {/* User info */}
+                <div style={{ padding: "8px 10px 10px", borderBottom: `1px solid ${isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)"}`, marginBottom: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{
+                      width: 34, height: 34, borderRadius: "50%",
+                      background: "linear-gradient(135deg, #f59e0b, #ef4444)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 13, fontWeight: 700, color: "white", flexShrink: 0,
+                    }}>
+                      {userInitial}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{userName}</p>
+                      <p style={{ margin: 0, fontSize: 11, color: textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{userEmail}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Menu items */}
+                {[
+                  { icon: <User size={13} />, label: "Profile", onClick: () => setUserMenuOpen(false) },
+                ].map((item) => (
+                  <button key={item.label} onClick={item.onClick} style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: 9,
+                    padding: "8px 10px", border: "none", borderRadius: 7,
+                    background: "none", cursor: "pointer",
+                    color: textSecondary, fontSize: 13,
+                  }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                  >
+                    {item.icon}
+                    {item.label}
+                  </button>
+                ))}
+
+                <div style={{ height: 1, background: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)", margin: "3px 0" }} />
+
+                {/* Sign out */}
+                <button
+                  onClick={() => signOut({ redirectUrl: "/sign-in" })}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: 9,
+                    padding: "8px 10px", border: "none", borderRadius: 7,
+                    background: "none", cursor: "pointer",
+                    color: "#f87171", fontSize: 13,
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(248,113,113,0.08)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
                 >
-                  <div className={`absolute inset-0 bg-gradient-to-br ${sw.color}`} />
-                  <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors" />
-                  <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                    <p className="text-xs font-medium text-white">{sw.title}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* My Files */}
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-white/80">My files</h2>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-1.5">
-                  <Search size={13} className="text-white/40" />
-                  <input
-                    type="text"
-                    placeholder="Search"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="bg-transparent text-sm text-white placeholder-white/30 outline-none w-36"
-                  />
-                </div>
-                <div className="flex items-center gap-1 bg-[#1a1a1a] border border-white/10 rounded-lg p-1">
-                  <button
-                    onClick={() => setView("list")}
-                    className={`p-1 rounded transition-colors ${view === "list" ? "bg-white/20" : "hover:bg-white/10"}`}
-                  >
-                    <List size={14} />
-                  </button>
-                  <button
-                    onClick={() => setView("grid")}
-                    className={`p-1 rounded transition-colors ${view === "grid" ? "bg-white/20" : "hover:bg-white/10"}`}
-                  >
-                    <LayoutGrid size={14} />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-white/30">
-                <GitBranch size={40} className="mb-3" />
-                <p className="text-sm">No workflows yet</p>
-                <p className="text-xs mt-1">Click Create New File to get started</p>
-              </div>
-            ) : view === "grid" ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                {filtered.map((w) => (
-                  <div
-                    key={w.id}
-                    onClick={() => router.push(`/workflow/${w.id}`)}
-                    className="group cursor-pointer"
-                  >
-                    <div className="aspect-[4/3] bg-[#1a1a1a] rounded-xl border border-white/5 group-hover:border-white/20 transition-colors flex items-center justify-center mb-2">
-                      <GitBranch size={28} className="text-white/20 group-hover:text-white/40 transition-colors" />
-                    </div>
-                    <p className="text-xs font-medium text-white/80 truncate">{w.name}</p>
-                    <p className="text-xs text-white/30 mt-0.5">
-                      {formatDistanceToNow(new Date(w.updatedAt))} ago
-                    </p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {filtered.map((w) => (
-                  <div
-                    key={w.id}
-                    onClick={() => router.push(`/workflow/${w.id}`)}
-                    className="flex items-center gap-4 p-3 bg-[#1a1a1a] rounded-lg border border-white/5 hover:border-white/20 cursor-pointer transition-colors"
-                  >
-                    <GitBranch size={18} className="text-white/30" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{w.name}</p>
-                      <p className="text-xs text-white/30">
-                        {formatDistanceToNow(new Date(w.updatedAt))} ago
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                  <LogOut size={13} />
+                  Sign out
+                </button>
               </div>
             )}
           </div>
         </div>
+      </nav>
+
+      {/* ── PAGE CONTENT ── */}
+      <div style={{ paddingTop: 52 }}>
+        {/* Hero Banner */}
+        <div style={{ padding: "20px 60px 0" }}>
+          <div style={{
+            borderRadius: 14, overflow: "hidden",
+            position: "relative", height: 220, background: isDark ? "#111" : "#e8e8e8",
+          }}>
+            <div style={{
+              position: "absolute", inset: 0,
+              backgroundImage: `url(https://s.krea.ai/nodesHeaderBannerBlurGradient.webp)`,
+              backgroundSize: "cover", backgroundPosition: "center right",
+            }} />
+            <div style={{
+              position: "absolute", inset: 0,
+              background: "linear-gradient(to right, rgba(0,0,0,0.9) 30%, rgba(0,0,0,0.2) 70%, rgba(0,0,0,0.05) 100%)",
+            }} />
+            <div style={{
+              position: "relative", zIndex: 1,
+              padding: "28px 32px", height: "100%",
+              display: "flex", flexDirection: "column", gap: 10, boxSizing: "border-box",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{
+                  width: 32, height: 32, background: "rgba(20,20,20,0.8)",
+                  borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8">
+                    <circle cx="7" cy="7" r="2" /><circle cx="17" cy="7" r="2" />
+                    <circle cx="7" cy="17" r="2" /><circle cx="17" cy="17" r="2" />
+                    <path d="M9 7h6M7 9v6M17 9v6M9 17h6" />
+                  </svg>
+                </div>
+                <h1 style={{ fontSize: 22, fontWeight: 700, color: "white", margin: 0, letterSpacing: "-0.01em" }}>
+                  Nodes
+                </h1>
+              </div>
+              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", maxWidth: 300, lineHeight: 1.65, margin: 0 }}>
+                Nodes is the most powerful way to operate NextFlow. Connect every tool and model into complex automated pipelines.
+              </p>
+              <div style={{ marginTop: "auto" }}>
+                <button onClick={createWorkflow} disabled={isCreating} style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  background: "white", border: "none", borderRadius: 8,
+                  padding: "8px 16px", color: "black", fontSize: 13, fontWeight: 600,
+                  cursor: isCreating ? "not-allowed" : "pointer",
+                }}>
+                  <Plus size={13} />
+                  {isCreating ? "Creating..." : "New Workflow"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Tabs + Search row */}
+        <div style={{ padding: "20px 60px 0" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex" }}>
+              {tabs.map((tab) => (
+                <button key={tab} onClick={() => setActiveTab(tab)} style={{
+                  padding: "8px 16px", background: "none", border: "none",
+                  borderBottom: activeTab === tab ? `2px solid ${textPrimary}` : "2px solid transparent",
+                  color: activeTab === tab ? textPrimary : textSecondary,
+                  fontSize: 14, fontWeight: activeTab === tab ? 600 : 400, cursor: "pointer",
+                }}>
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ position: "relative" }}>
+                <Search size={12} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: textMuted, pointerEvents: "none" }} />
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search projects..."
+                  style={{
+                    background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
+                    border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.1)"}`,
+                    borderRadius: 8, paddingLeft: 28, paddingRight: 12,
+                    paddingTop: 6, paddingBottom: 6,
+                    color: textPrimary, fontSize: 13, outline: "none", width: 190,
+                  }}
+                />
+              </div>
+              <button style={{
+                display: "flex", alignItems: "center", gap: 5,
+                background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
+                border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.1)"}`,
+                borderRadius: 8, padding: "6px 12px",
+                color: textSecondary, fontSize: 13, cursor: "pointer",
+              }}>
+                Last viewed <ChevronDown size={12} />
+              </button>
+            </div>
+          </div>
+          <div style={{ height: 1, background: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)", marginTop: 0 }} />
+        </div>
+
+        {/* Grid */}
+        <div style={{ padding: "20px 60px 60px" }}>
+          {activeTab === "Templates" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 }}>
+              <TemplateCard
+                name="Product Marketing Kit"
+                description="Upload a product photo and generate professional marketing copy with AI"
+                nodeCount={9}
+                onClick={loadSampleWorkflow}
+                isDark={isDark}
+                textPrimary={textPrimary}
+                textSecondary={textSecondary}
+              />
+            </div>
+          ) : activeTab === "Projects" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 }}>
+              <WorkflowCard isNew onClick={createWorkflow} isCreating={isCreating} isDark={isDark} textPrimary={textPrimary} textSecondary={textSecondary} textMuted={textMuted} />
+              {filteredWorkflows.map((wf) => (
+                <WorkflowCard
+                  key={wf.id} workflow={wf}
+                  isRenaming={renamingId === wf.id}
+                  renameValue={renameValue}
+                  onRenameChange={setRenameValue}
+                  onRenameSubmit={() => renameWorkflow(wf.id, renameValue)}
+                  onClick={() => router.push(`/workflow/${wf.id}`)}
+                  onContextMenu={(e: React.MouseEvent) => {
+                    e.preventDefault(); e.stopPropagation()
+                    setContextMenu({ x: e.clientX, y: e.clientY, workflow: wf })
+                  }}
+                  formatTime={formatTime}
+                  isDark={isDark} textPrimary={textPrimary} textSecondary={textSecondary} textMuted={textMuted}
+                />
+              ))}
+            </div>
+          ) : (
+            <EmptyState isDark={isDark} textMuted={textMuted} />
+          )}
+        </div>
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div ref={contextRef} onClick={(e) => e.stopPropagation()} style={{
+          position: "fixed", top: contextMenu.y, left: contextMenu.x,
+          background: isDark ? "#1a1a1a" : "#fff",
+          border: `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+          borderRadius: 10, padding: 4, zIndex: 1000, minWidth: 160,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+        }}>
+          {[
+            { icon: <ExternalLink size={13} />, label: "Open", onClick: () => { router.push(`/workflow/${contextMenu.workflow.id}`); setContextMenu(null) }, danger: false },
+            { icon: <Pencil size={13} />, label: "Rename", onClick: () => { setRenamingId(contextMenu.workflow.id); setRenameValue(contextMenu.workflow.name); setContextMenu(null) }, danger: false },
+            { icon: <Copy size={13} />, label: "Duplicate", onClick: () => duplicateWorkflow(contextMenu.workflow), danger: false },
+            null,
+            { icon: <Trash2 size={13} />, label: "Delete", onClick: () => deleteWorkflow(contextMenu.workflow.id), danger: true },
+          ].map((item, i) =>
+            item === null ? (
+              <div key={i} style={{ height: 1, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)", margin: "3px 0" }} />
+            ) : (
+              <button key={item.label} onClick={item.onClick} style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 9,
+                padding: "8px 10px", border: "none", borderRadius: 7, background: "none",
+                cursor: "pointer", color: item.danger ? "#f87171" : (isDark ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.7)"), fontSize: 13,
+              }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = item.danger ? "rgba(248,113,113,0.08)" : (isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)"))}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+              >
+                {item.icon}{item.label}
+              </button>
+            )
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── Shared small components ── */
+
+function NavBtn({ children, onClick, isDark, title }: { children: React.ReactNode; onClick?: () => void; isDark: boolean; title?: string }) {
+  return (
+    <button onClick={onClick} title={title} style={{
+      width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center",
+      background: "none", border: "none", cursor: "pointer", borderRadius: 8,
+      color: isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)",
+    }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)"; e.currentTarget.style.color = isDark ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.7)" }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)" }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function NavIconBtn({ icon, label, active, isDark, textSecondary }: any) {
+  const [show, setShow] = useState(false)
+  return (
+    <div style={{ position: "relative" }} onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      <button style={{
+        width: 34, height: 30, display: "flex", alignItems: "center", justifyContent: "center",
+        background: active ? (isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)") : "none",
+        border: "none", borderRadius: 8, cursor: "pointer",
+        color: active ? (isDark ? "white" : "#111") : textSecondary,
+      }}
+        onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.05)"; e.currentTarget.style.color = isDark ? "rgba(255,255,255,0.75)" : "rgba(0,0,0,0.75)" } }}
+        onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "none"; e.currentTarget.style.color = textSecondary } }}
+      >
+        {icon}
+      </button>
+      {show && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
+          background: isDark ? "#1e1e1e" : "#fff",
+          border: `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+          borderRadius: 6, padding: "4px 8px",
+          fontSize: 11, color: isDark ? "rgba(255,255,255,0.8)" : "rgba(0,0,0,0.8)",
+          whiteSpace: "nowrap", pointerEvents: "none", zIndex: 200,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+        }}>
+          {label}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function WorkflowCard({ isNew, onClick, onContextMenu, isCreating, workflow, isRenaming, renameValue, onRenameChange, onRenameSubmit, formatTime, isDark, textPrimary, textSecondary, textMuted }: any) {
+  const [hovered, setHovered] = useState(false)
+  const bg = hovered
+    ? (isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)")
+    : (isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)")
+  const border = hovered
+    ? (isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.15)")
+    : (isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)")
+
+  return (
+    <div onClick={onClick} onContextMenu={onContextMenu}
+      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+      style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, cursor: "pointer", overflow: "hidden", transition: "all 0.15s" }}
+    >
+      <div style={{
+        height: 140,
+        background: isNew ? (isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)") : (isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)"),
+        display: "flex", alignItems: "center", justifyContent: "center",
+        borderBottom: `1px solid ${isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.06)"}`,
+      }}>
+        {isNew ? (
+          <div style={{
+            width: 36, height: 36, borderRadius: "50%",
+            background: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            border: `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+          }}>
+            <Plus size={16} style={{ color: isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)" }} />
+          </div>
+        ) : (
+          <WorkflowThumbnail nodes={workflow?.nodes} edges={workflow?.edges} isDark={isDark} />
+        )}
+      </div>
+      <div style={{ padding: "10px 12px" }}>
+        {isNew ? (
+          <p style={{ fontSize: 14, fontWeight: 500, color: textSecondary, margin: 0 }}>
+            {isCreating ? "Creating..." : "New Workflow"}
+          </p>
+        ) : isRenaming ? (
+          <input autoFocus value={renameValue}
+            onChange={(e) => onRenameChange(e.target.value)}
+            onBlur={onRenameSubmit}
+            onKeyDown={(e) => { if (e.key === "Enter") onRenameSubmit(); if (e.key === "Escape") onRenameChange(workflow.name) }}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%", background: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
+              border: `1px solid ${isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)"}`,
+              borderRadius: 5, padding: "3px 7px", color: textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box",
+            }}
+          />
+        ) : (
+          <>
+            <p style={{ fontSize: 14, fontWeight: 500, color: textPrimary, margin: "0 0 3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {workflow.name}
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <Clock size={10} style={{ color: textMuted }} />
+              <p style={{ fontSize: 11, color: textMuted, margin: 0 }}>{formatTime(workflow.updatedAt)}</p>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function WorkflowThumbnail({ nodes, edges, isDark }: { nodes?: any[]; edges?: any[]; isDark: boolean }) {
+  if (!nodes?.length) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 32, height: 24, background: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)", borderRadius: 5, border: `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"}` }} />
+        <div style={{ width: 44, height: 24, background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)", borderRadius: 5, border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)"}` }} />
+      </div>
+    )
+  }
+  return (
+    <svg width="120" height="80" viewBox="0 0 120 80">
+      {edges?.slice(0, 3).map((e: any, i: number) => (
+        <line key={i} x1={20 + i * 18} y1={40} x2={58 + i * 18} y2={40}
+          stroke="rgba(234,179,8,0.45)" strokeWidth="1.5" />
+      ))}
+      {nodes?.slice(0, 4).map((n: any, i: number) => (
+        <rect key={i}
+          x={8 + (i % 2) * 62} y={14 + Math.floor(i / 2) * 36}
+          width={46} height={26} rx={4}
+          fill={isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.05)"}
+          stroke={isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)"} strokeWidth="1"
+        />
+      ))}
+    </svg>
+  )
+}
+
+function TemplateCard({ name, description, nodeCount, onClick, isDark, textPrimary, textSecondary }: any) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <div onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+      style={{
+        background: hovered ? (isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)") : (isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)"),
+        border: `1px solid ${hovered ? (isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.12)") : (isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)")}`,
+        borderRadius: 12, cursor: "pointer", overflow: "hidden", transition: "all 0.15s",
+      }}
+    >
+      <div style={{
+        height: 110,
+        background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(168,85,247,0.12))",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        borderBottom: `1px solid ${isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.06)"}`,
+      }}>
+        <svg width="80" height="50" viewBox="0 0 80 50">
+          <rect x="2" y="6" width="28" height="16" rx="3" fill="rgba(255,255,255,0.1)" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
+          <rect x="50" y="2" width="28" height="16" rx="3" fill="rgba(255,255,255,0.1)" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
+          <rect x="50" y="28" width="28" height="16" rx="3" fill="rgba(255,255,255,0.1)" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
+          <line x1="30" y1="14" x2="50" y2="10" stroke="rgba(234,179,8,0.5)" strokeWidth="1.5" />
+          <line x1="30" y1="14" x2="50" y2="36" stroke="rgba(234,179,8,0.5)" strokeWidth="1.5" />
+        </svg>
+      </div>
+      <div style={{ padding: "12px 14px" }}>
+        <p style={{ fontSize: 14, fontWeight: 600, color: textPrimary, margin: "0 0 5px" }}>{name}</p>
+        <p style={{ fontSize: 12, color: textSecondary, margin: "0 0 10px", lineHeight: 1.5 }}>{description}</p>
+        <span style={{ fontSize: 11, color: isDark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.35)", background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)", padding: "2px 7px", borderRadius: 5 }}>
+          {nodeCount} nodes
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function EmptyState({ isDark, textMuted }: any) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 180, gap: 10 }}>
+      <div style={{ width: 44, height: 44, borderRadius: 12, background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Folder size={18} style={{ color: textMuted }} />
+      </div>
+      <p style={{ color: textMuted, fontSize: 14, margin: 0 }}>Nothing here yet</p>
     </div>
   )
 }

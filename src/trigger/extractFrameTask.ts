@@ -1,24 +1,34 @@
 import { task } from "@trigger.dev/sdk/v3"
 import ffmpeg from "fluent-ffmpeg"
+import ffmpegStatic from "ffmpeg-static"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
-import ffmpegStatic from "ffmpeg-static"
-import ffprobeStatic from "ffprobe-static"
 
+// Only set ffmpeg path — do NOT import ffprobe-static directly
 ffmpeg.setFfmpegPath(ffmpegStatic as string)
-ffmpeg.setFfprobePath(ffprobeStatic.path)
 
-async function uploadToTransloadit(fileBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
+async function uploadToTransloadit(
+  fileBuffer: Buffer,
+  fileName: string,
+  mimeType: string
+): Promise<string> {
   const params = JSON.stringify({
     auth: { key: process.env.NEXT_PUBLIC_TRANSLOADIT_KEY },
     steps: { ":original": { robot: "/upload/handle" } },
   })
   const formData = new FormData()
   formData.append("params", params)
-  formData.append("file", new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), fileName)
+  formData.append(
+    "file",
+    new Blob([new Uint8Array(fileBuffer)], { type: mimeType }),
+    fileName
+  )
 
-  const res = await fetch("https://api2.transloadit.com/assemblies", { method: "POST", body: formData })
+  const res = await fetch("https://api2.transloadit.com/assemblies", {
+    method: "POST",
+    body: formData,
+  })
   const result = await res.json()
   const assemblyUrl = result.assembly_ssl_url || result.assembly_url
 
@@ -26,9 +36,11 @@ async function uploadToTransloadit(fileBuffer: Buffer, fileName: string, mimeTyp
     await new Promise((r) => setTimeout(r, 1500))
     const poll = await (await fetch(assemblyUrl)).json()
     if (poll.ok === "ASSEMBLY_COMPLETED") {
-      if (poll.uploads?.length > 0) return poll.uploads[0].ssl_url || poll.uploads[0].url
+      if (poll.uploads?.length > 0)
+        return poll.uploads[0].ssl_url || poll.uploads[0].url
       for (const key of Object.keys(poll.results || {})) {
-        if (poll.results[key]?.length > 0) return poll.results[key][0].ssl_url || poll.results[key][0].url
+        if (poll.results[key]?.length > 0)
+          return poll.results[key][0].ssl_url || poll.results[key][0].url
       }
     }
     if (poll.ok === "ASSEMBLY_FAILED") throw new Error(poll.error)
@@ -36,48 +48,65 @@ async function uploadToTransloadit(fileBuffer: Buffer, fileName: string, mimeTyp
   throw new Error("Upload timed out")
 }
 
+// Get video duration using fluent-ffmpeg's built-in ffprobe
+function getVideoDuration(inputPath: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(inputPath, (err: any, metadata: any) => {
+      if (err) return reject(err)
+      const duration = metadata?.format?.duration || 10
+      resolve(Number(duration))
+    })
+  })
+}
+
 export const extractFrameTask = task({
   id: "extract-frame-task",
-  retry: { maxAttempts: 1 }, // reduce retries since bad input won't fix itself
+  retry: { maxAttempts: 1 },
   run: async (payload: { videoUrl: string; timestamp: string }) => {
-    // ── Guard: validate URL before doing anything ──
-    if (!payload.videoUrl || typeof payload.videoUrl !== "string" || payload.videoUrl.trim() === "") {
-      throw new Error("video_url is required but was empty or missing. Make sure the Upload Video node has a video uploaded and is connected.")
+    // Validate input
+    if (
+      !payload.videoUrl ||
+      typeof payload.videoUrl !== "string" ||
+      payload.videoUrl.trim() === ""
+    ) {
+      throw new Error(
+        "video_url is required but was empty or missing. Make sure the Upload Video node has a video uploaded and is connected."
+      )
     }
 
-    // Validate it's an actual URLd
     try {
       new URL(payload.videoUrl)
     } catch {
-      throw new Error(`Invalid video_url: "${payload.videoUrl}" is not a valid URL.`)
+      throw new Error(
+        `Invalid video_url: "${payload.videoUrl}" is not a valid URL.`
+      )
     }
 
     const tmpDir = os.tmpdir()
     const inputPath = path.join(tmpDir, `input-${Date.now()}.mp4`)
     const outputPath = path.join(tmpDir, `frame-${Date.now()}.jpg`)
 
+    // Download video
     const res = await fetch(payload.videoUrl)
     if (!res.ok) {
-      throw new Error(`Failed to fetch video from URL: ${res.status} ${res.statusText}`)
+      throw new Error(
+        `Failed to fetch video from URL: ${res.status} ${res.statusText}`
+      )
     }
     const buffer = Buffer.from(await res.arrayBuffer())
     fs.writeFileSync(inputPath, buffer)
 
+    // Resolve seek time
     let seekTime = 0
     if (payload.timestamp?.endsWith("%")) {
       const percent = parseFloat(payload.timestamp) / 100
-      await new Promise<void>((resolve, reject) => {
-        ffmpeg.ffprobe(inputPath, (err: any, metadata: any) => {
-          if (err) return reject(err)
-          const duration = metadata.format.duration || 10
-          seekTime = duration * percent
-          resolve()
-        })
-      })
+      const duration = await getVideoDuration(inputPath)
+      seekTime = duration * percent
     } else {
       seekTime = parseFloat(payload.timestamp) || 0
     }
 
+    // Extract frame
     await new Promise<void>((resolve, reject) => {
       ffmpeg(inputPath)
         .seekInput(seekTime)
@@ -90,7 +119,7 @@ export const extractFrameTask = task({
 
     const outputBuffer = fs.readFileSync(outputPath)
 
-    // Cleanup temp files
+    // Cleanup
     try { fs.unlinkSync(inputPath) } catch { }
     try { fs.unlinkSync(outputPath) } catch { }
 

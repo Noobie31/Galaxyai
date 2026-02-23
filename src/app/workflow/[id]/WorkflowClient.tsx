@@ -1,11 +1,10 @@
 "use client"
 
-import { useEffect, useCallback, useRef } from "react"
+import { useEffect, useCallback, useRef, useState } from "react"
 import { useWorkflowStore } from "@/store/workflowStore"
 import LeftSidebar from "@/components/sidebar/LeftSidebar"
 import RightSidebar from "@/components/sidebar/RightSidebar"
 import WorkflowCanvas from "@/components/canvas/WorkflowCanvas"
-import TopNavbar from "@/components/canvas/TopNavbar"
 import { ReactFlowProvider } from "@xyflow/react"
 
 interface Props {
@@ -15,30 +14,25 @@ interface Props {
   initialEdges: any[]
 }
 
-export default function WorkflowClient({
-  workflowId,
-  workflowName,
-  initialNodes,
-  initialEdges,
-}: Props) {
+function WorkflowClientInner({ workflowId, workflowName, initialNodes, initialEdges }: Props) {
   const { setWorkflowId, setWorkflowName, setNodes, setEdges, setIsSaving, setLastSaved } =
     useWorkflowStore()
 
+  const [showHistory, setShowHistory] = useState(false)
   const autoSaveTimer = useRef<NodeJS.Timeout | null>(null)
   const initialized = useRef(false)
 
-  // Initialize store with server data once
+  // Initialize store once on mount
   useEffect(() => {
     if (initialized.current) return
     initialized.current = true
     setWorkflowId(workflowId)
     setWorkflowName(workflowName)
-    setNodes(initialNodes || [])
-    setEdges(initialEdges || [])
+    setNodes(initialNodes ?? [])
+    setEdges(initialEdges ?? [])
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveWorkflow = useCallback(async () => {
-    // Always read fresh from store — avoids stale closure bug
     const state = useWorkflowStore.getState()
     setIsSaving(true)
     try {
@@ -59,12 +53,35 @@ export default function WorkflowClient({
     }
   }, [setIsSaving, setLastSaved])
 
-  // Auto-save on node/edge changes — subscribe to store directly to avoid stale values
+  // Ctrl+S save
   useEffect(() => {
-    if (!initialized.current) return
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault()
+        saveWorkflow()
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [saveWorkflow])
 
-    // Subscribe to store changes for auto-save
-    const unsubscribe = useWorkflowStore.subscribe(() => {
+  // Auto-save when nodes/edges/name change
+  useEffect(() => {
+    let prevNodes = useWorkflowStore.getState().nodes
+    let prevEdges = useWorkflowStore.getState().edges
+    let prevName = useWorkflowStore.getState().workflowName
+
+    const unsubscribe = useWorkflowStore.subscribe((state) => {
+      const changed =
+        state.nodes !== prevNodes ||
+        state.edges !== prevEdges ||
+        state.workflowName !== prevName
+
+      if (!changed) return
+      prevNodes = state.nodes
+      prevEdges = state.edges
+      prevName = state.workflowName
+
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
       autoSaveTimer.current = setTimeout(saveWorkflow, 2000)
     })
@@ -76,26 +93,30 @@ export default function WorkflowClient({
   }, [saveWorkflow])
 
   return (
-    <ReactFlowProvider>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          height: "100vh",
-          width: "100vw",
-          background: "#0a0a0a",
-          overflow: "hidden",
-        }}
-      >
-        <TopNavbar workflowId={workflowId} saveWorkflow={saveWorkflow} />
-        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-          <LeftSidebar />
-          <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-            <WorkflowCanvas />
-          </div>
-          <RightSidebar workflowId={workflowId} />
-        </div>
+    <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#0a0a0a", overflow: "hidden" }}>
+      {/* Left sidebar */}
+      <LeftSidebar />
+
+      {/* Canvas */}
+      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        <WorkflowCanvas onHistoryToggle={() => setShowHistory((v) => !v)} />
       </div>
+
+      {/* Right sidebar — shown when history toggled */}
+      {showHistory && (
+        <RightSidebar
+          workflowId={workflowId}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+export default function WorkflowClient(props: Props) {
+  return (
+    <ReactFlowProvider>
+      <WorkflowClientInner {...props} />
     </ReactFlowProvider>
   )
 }
