@@ -1,12 +1,13 @@
 import { task } from "@trigger.dev/sdk/v3"
 import ffmpeg from "fluent-ffmpeg"
 import ffmpegStatic from "ffmpeg-static"
+import ffprobeStatic from "ffprobe-static"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
 
-// Only set ffmpeg path — do NOT import ffprobe-static directly
 ffmpeg.setFfmpegPath(ffmpegStatic as string)
+ffmpeg.setFfprobePath(ffprobeStatic.path)
 
 async function uploadToTransloadit(
   fileBuffer: Buffer,
@@ -48,7 +49,6 @@ async function uploadToTransloadit(
   throw new Error("Upload timed out")
 }
 
-// Get video duration using fluent-ffmpeg's built-in ffprobe
 function getVideoDuration(inputPath: string): Promise<number> {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(inputPath, (err: any, metadata: any) => {
@@ -63,7 +63,6 @@ export const extractFrameTask = task({
   id: "extract-frame-task",
   retry: { maxAttempts: 1 },
   run: async (payload: { videoUrl: string; timestamp: string }) => {
-    // Validate input
     if (
       !payload.videoUrl ||
       typeof payload.videoUrl !== "string" ||
@@ -86,7 +85,6 @@ export const extractFrameTask = task({
     const inputPath = path.join(tmpDir, `input-${Date.now()}.mp4`)
     const outputPath = path.join(tmpDir, `frame-${Date.now()}.jpg`)
 
-    // Download video
     const res = await fetch(payload.videoUrl)
     if (!res.ok) {
       throw new Error(
@@ -96,7 +94,6 @@ export const extractFrameTask = task({
     const buffer = Buffer.from(await res.arrayBuffer())
     fs.writeFileSync(inputPath, buffer)
 
-    // Resolve seek time
     let seekTime = 0
     if (payload.timestamp?.endsWith("%")) {
       const percent = parseFloat(payload.timestamp) / 100
@@ -106,7 +103,6 @@ export const extractFrameTask = task({
       seekTime = parseFloat(payload.timestamp) || 0
     }
 
-    // Extract frame
     await new Promise<void>((resolve, reject) => {
       ffmpeg(inputPath)
         .seekInput(seekTime)
@@ -119,7 +115,6 @@ export const extractFrameTask = task({
 
     const outputBuffer = fs.readFileSync(outputPath)
 
-    // Cleanup
     try { fs.unlinkSync(inputPath) } catch { }
     try { fs.unlinkSync(outputPath) } catch { }
 

@@ -1,13 +1,13 @@
 import { task } from "@trigger.dev/sdk/v3"
 import ffmpeg from "fluent-ffmpeg"
 import ffmpegStatic from "ffmpeg-static"
+import ffprobeStatic from "ffprobe-static"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
 
-// Only set ffmpeg path — do NOT import ffprobe-static directly
-// ffprobe is bundled inside ffmpeg-static on most platforms
 ffmpeg.setFfmpegPath(ffmpegStatic as string)
+ffmpeg.setFfprobePath(ffprobeStatic.path)
 
 async function uploadToTransloadit(
   fileBuffer: Buffer,
@@ -49,7 +49,6 @@ async function uploadToTransloadit(
   throw new Error("Upload timed out")
 }
 
-// Get image dimensions using ffmpeg (no ffprobe-static needed)
 function getImageDimensions(
   inputPath: string
 ): Promise<{ width: number; height: number }> {
@@ -85,7 +84,6 @@ export const cropImageTask = task({
     const inputPath = path.join(tmpDir, `input-${Date.now()}.jpg`)
     const outputPath = path.join(tmpDir, `output-${Date.now()}.jpg`)
 
-    // Download image
     const res = await fetch(payload.imageUrl)
     if (!res.ok)
       throw new Error(`Failed to fetch image: ${res.status} ${res.statusText}`)
@@ -93,7 +91,6 @@ export const cropImageTask = task({
     const buffer = Buffer.from(await res.arrayBuffer())
     fs.writeFileSync(inputPath, buffer)
 
-    // Get dimensions via ffprobe (built into fluent-ffmpeg)
     const { width, height } = await getImageDimensions(inputPath)
 
     const x = Math.floor((payload.xPercent / 100) * width)
@@ -101,7 +98,6 @@ export const cropImageTask = task({
     const w = Math.max(1, Math.floor((payload.widthPercent / 100) * width))
     const h = Math.max(1, Math.floor((payload.heightPercent / 100) * height))
 
-    // Crop using ffmpeg
     await new Promise<void>((resolve, reject) => {
       ffmpeg(inputPath)
         .videoFilter(`crop=${w}:${h}:${x}:${y}`)
@@ -114,7 +110,6 @@ export const cropImageTask = task({
 
     const outputBuffer = fs.readFileSync(outputPath)
 
-    // Cleanup
     try { fs.unlinkSync(inputPath) } catch { }
     try { fs.unlinkSync(outputPath) } catch { }
 
