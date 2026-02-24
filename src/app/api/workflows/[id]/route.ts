@@ -9,52 +9,45 @@ const updateSchema = z.object({
   edges: z.array(z.any()).optional(),
 })
 
-export async function GET(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function GET(_req: Request, { params }: { params: { id: string } }) {
   const { userId } = await auth()
-  if (!userId)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const workflow = await prisma.workflow.findUnique({
-    where: { id: params.id },
+  const workflow = await prisma.workflow.findFirst({
+    where: { id: params.id, userId },
   })
 
-  if (!workflow || workflow.userId !== userId)
-    return NextResponse.json({ error: "Not found" }, { status: 404 })
-
+  if (!workflow) return NextResponse.json({ error: "Not found" }, { status: 404 })
   return NextResponse.json(workflow)
 }
 
-export async function PUT(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function PUT(req: Request, { params }: { params: { id: string } }) {
   const { userId } = await auth()
-  if (!userId)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const body = await req.json()
-  const data = updateSchema.parse(body)
+  const parsed = updateSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 })
+  }
 
-  const workflow = await prisma.workflow.update({
+  const workflow = await prisma.workflow.updateMany({
     where: { id: params.id, userId },
-    data: { ...data, updatedAt: new Date() },
+    data: {
+      ...(parsed.data.name !== undefined && { name: parsed.data.name }),
+      ...(parsed.data.nodes !== undefined && { nodes: parsed.data.nodes }),
+      ...(parsed.data.edges !== undefined && { edges: parsed.data.edges }),
+    },
   })
 
-  return NextResponse.json(workflow)
+  return NextResponse.json({ success: true, count: workflow.count })
 }
 
-export async function DELETE(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const { userId } = await auth()
-  if (!userId)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  await prisma.workflow.delete({
+  await prisma.workflow.deleteMany({
     where: { id: params.id, userId },
   })
 

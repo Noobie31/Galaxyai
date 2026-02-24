@@ -1,69 +1,74 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
-import { tasks } from "@trigger.dev/sdk/v3"
-import type { cropImageTask } from "@/trigger/cropImageTask"
-import type { extractFrameTask } from "@/trigger/extractFrameTask"
-import type { llmTask } from "@/trigger/llmTask"
+import { z } from "zod"
 
-export const maxDuration = 60
+const bodySchema = z.object({
+  nodeId: z.string(),
+  nodeType: z.string(),
+  inputs: z.record(z.any()),
+})
 
 export async function POST(req: Request) {
   const { userId } = await auth()
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const body = await req.json()
-  const { nodeType, inputs } = body
+  const parsed = bodySchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid request", details: parsed.error.flatten() }, { status: 400 })
+  }
+
+  const { nodeType, inputs } = parsed.data
 
   try {
-    // ─── LLM Node — via Trigger.dev (non-negotiable per assignment) ───
     if (nodeType === "llmNode") {
-      const handle = await tasks.trigger<typeof llmTask>("llm-task", {
+      const { tasks } = await import("@trigger.dev/sdk/v3")
+      const { llmTask } = await import("@/trigger/llmTask")
+
+      const handle = await tasks.trigger(llmTask.id, {
         model: inputs.model || "gemini-2.0-flash",
-        systemPrompt: inputs.system_prompt || "",
-        userMessage: inputs.user_message || "",
+        systemPrompt: inputs.system_prompt,
+        userMessage: inputs.user_message || inputs.text || "",
         imageUrls: Array.isArray(inputs.images)
           ? inputs.images.filter(Boolean)
           : inputs.images
             ? [inputs.images]
             : [],
       })
-      // Return runId so client can poll — avoids Vercel 60s timeout
-      return NextResponse.json({ runId: handle.id, pending: true })
+
+      return NextResponse.json({ pending: true, runId: handle.id })
     }
 
-    // ─── Crop Image — via Trigger.dev ───
     if (nodeType === "cropImageNode") {
-      const handle = await tasks.trigger<typeof cropImageTask>("crop-image-task", {
+      const { tasks } = await import("@trigger.dev/sdk/v3")
+      const { cropImageTask } = await import("@/trigger/cropImageTask")
+
+      const handle = await tasks.trigger(cropImageTask.id, {
         imageUrl: inputs.image_url,
-        xPercent: parseFloat(inputs.x_percent) || 0,
-        yPercent: parseFloat(inputs.y_percent) || 0,
-        widthPercent: parseFloat(inputs.width_percent) || 100,
-        heightPercent: parseFloat(inputs.height_percent) || 100,
+        xPercent: Number(inputs.x_percent ?? 0),
+        yPercent: Number(inputs.y_percent ?? 0),
+        widthPercent: Number(inputs.width_percent ?? 100),
+        heightPercent: Number(inputs.height_percent ?? 100),
       })
-      return NextResponse.json({ runId: handle.id, pending: true })
+
+      return NextResponse.json({ pending: true, runId: handle.id })
     }
 
-    // ─── Extract Frame — via Trigger.dev ───
     if (nodeType === "extractFrameNode") {
-      const handle = await tasks.trigger<typeof extractFrameTask>("extract-frame-task", {
+      const { tasks } = await import("@trigger.dev/sdk/v3")
+      const { extractFrameTask } = await import("@/trigger/extractFrameTask")
+
+      const handle = await tasks.trigger(extractFrameTask.id, {
         videoUrl: inputs.video_url,
-        timestamp: inputs.timestamp || "0",
+        timestamp: inputs.timestamp ?? "0",
       })
-      return NextResponse.json({ runId: handle.id, pending: true })
+
+      return NextResponse.json({ pending: true, runId: handle.id })
     }
 
-    // ─── Text / Upload nodes — no execution needed, output comes from node data ───
-    if (
-      nodeType === "textNode" ||
-      nodeType === "imageUploadNode" ||
-      nodeType === "videoUploadNode"
-    ) {
-      return NextResponse.json({ output: inputs.text || inputs.image_url || inputs.video_url || "" })
-    }
-
-    return NextResponse.json({ error: "Unknown node type" }, { status: 400 })
+    return NextResponse.json({ error: `Unknown node type: ${nodeType}` }, { status: 400 })
   } catch (err: any) {
     console.error("Execute error:", err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: err.message || "Execution failed" }, { status: 500 })
   }
 }

@@ -1,8 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
-import { runs } from "@trigger.dev/sdk/v3"
-
-export const maxDuration = 10
 
 export async function GET(req: Request) {
     const { userId } = await auth()
@@ -14,28 +11,36 @@ export async function GET(req: Request) {
     if (!runId) return NextResponse.json({ error: "runId required" }, { status: 400 })
 
     try {
+        const { runs } = await import("@trigger.dev/sdk/v3")
         const run = await runs.retrieve(runId)
 
         if (run.status === "COMPLETED") {
-            return NextResponse.json({ status: "COMPLETED", output: (run.output as any)?.output })
+            return NextResponse.json({
+                status: "COMPLETED",
+                output: run.output,
+            })
         }
 
         if (
             run.status === "FAILED" ||
-            run.status === "CRASHED" ||
             run.status === "CANCELED" ||
+            run.status === "CRASHED" ||
+            run.status === "SYSTEM_FAILURE" ||
             run.status === "TIMED_OUT" ||
             run.status === "EXPIRED"
         ) {
-            return NextResponse.json({
-                status: "FAILED",
-                error: `Task ${run.status}`,
-            })
+            const errorMsg =
+                (run as any)?.error?.message ||
+                (run as any)?.error ||
+                `Task ${run.status.toLowerCase()}`
+
+            return NextResponse.json({ status: "FAILED", error: String(errorMsg) })
         }
 
+        // Still running (QUEUED, EXECUTING, WAITING_FOR_DEPLOY, etc.)
         return NextResponse.json({ status: "PENDING" })
     } catch (err: any) {
         console.error("Poll error:", err)
-        return NextResponse.json({ error: err.message }, { status: 500 })
+        return NextResponse.json({ error: err.message || "Poll failed" }, { status: 500 })
     }
 }

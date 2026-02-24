@@ -1,89 +1,52 @@
 import { create } from "zustand"
-import { immer } from "zustand/middleware/immer"
-import { Node, Edge } from "@xyflow/react"
 
-interface WorkflowState {
-    workflowId: string | null
+interface WorkflowStore {
+    workflowId: string
     workflowName: string
-    nodes: Node[]
-    edges: Edge[]
-    selectedNodes: string[]
+    nodes: any[]
+    edges: any[]
     isSaving: boolean
     lastSaved: Date | null
 
-    // Actions
     setWorkflowId: (id: string) => void
     setWorkflowName: (name: string) => void
-    setNodes: (nodes: Node[]) => void
-    setEdges: (edges: Edge[]) => void
-    addNode: (node: Node) => void
-    updateNode: (id: string, data: any) => void
-    removeNode: (id: string) => void
-    addEdge: (edge: Edge) => void
-    removeEdge: (id: string) => void
-    setSelectedNodes: (ids: string[]) => void
-    setIsSaving: (saving: boolean) => void
+    setNodes: (nodes: any[]) => void
+    setEdges: (edges: any[]) => void
+    setIsSaving: (v: boolean) => void
     setLastSaved: (date: Date) => void
-    reset: () => void
+    removeNode: (nodeId: string) => void
+    addNode: (node: any) => void
+    updateNode: (nodeId: string, data: Partial<any>) => void
 }
 
-export const useWorkflowStore = create<WorkflowState>()(
-    immer((set) => ({
-        workflowId: null,
-        workflowName: "untitled",
-        nodes: [],
-        edges: [],
-        selectedNodes: [],
-        isSaving: false,
-        lastSaved: null,
+export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
+    workflowId: "",
+    workflowName: "Untitled",
+    nodes: [],
+    edges: [],
+    isSaving: false,
+    lastSaved: null,
 
-        setWorkflowId: (id) => set((state) => { state.workflowId = id }),
-        setWorkflowName: (name) => set((state) => { state.workflowName = name }),
-        setNodes: (nodes) => set((state) => { state.nodes = nodes }),
-        setEdges: (edges) => set((state) => { state.edges = edges }),
+    setWorkflowId: (workflowId) => set({ workflowId }),
+    setWorkflowName: (workflowName) => set({ workflowName }),
+    setNodes: (nodes) => set({ nodes }),
+    setEdges: (edges) => set({ edges }),
+    setIsSaving: (isSaving) => set({ isSaving }),
+    setLastSaved: (lastSaved) => set({ lastSaved }),
 
-        addNode: (node) => set((state) => {
-            state.nodes.push(node)
-        }),
+    removeNode: (nodeId) =>
+        set((s) => ({
+            nodes: s.nodes.filter((n) => n.id !== nodeId),
+            edges: s.edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
+        })),
 
-        updateNode: (id, data) => set((state) => {
-            const node = state.nodes.find((n) => n.id === id)
-            if (node) node.data = { ...node.data, ...data }
-        }),
+    addNode: (node) =>
+        set((s) => ({ nodes: [...s.nodes, node] })),
 
-        removeNode: (id) => set((state) => {
-            state.nodes = state.nodes.filter((n) => n.id !== id)
-            state.edges = state.edges.filter(
-                (e) => e.source !== id && e.target !== id
-            )
-        }),
-
-        addEdge: (edge) => set((state) => {
-            state.edges.push(edge)
-        }),
-
-        removeEdge: (id) => set((state) => {
-            state.edges = state.edges.filter((e) => e.id !== id)
-        }),
-
-        setSelectedNodes: (ids) => set((state) => {
-            state.selectedNodes = ids
-        }),
-
-        setIsSaving: (saving) => set((state) => {
-            state.isSaving = saving
-        }),
-
-        setLastSaved: (date) => set((state) => {
-            state.lastSaved = date
-        }),
-
-        reset: () => set((state) => {
-            state.workflowId = null
-            state.workflowName = "untitled"
-            state.nodes = []
-            state.edges = []
-            state.selectedNodes = []
-        }),
-    }))
-)
+    updateNode: (nodeId, data) =>
+        set((s) => ({
+            nodes: s.nodes.map((n) =>
+                n.id === nodeId ? { ...n, data: { ...n.data, ...data } } : n
+            ),
+        })),
+}))

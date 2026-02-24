@@ -1,13 +1,13 @@
 import { create } from "zustand"
 
-type CanvasTool = "add" | "select" | "pan" | "cut" | "magic" | "nodes"
+type Tool = "select" | "pan" | "cut" | "magic" | "connect"
 
-interface CanvasToolState {
-    activeTool: CanvasTool
-    setActiveTool: (tool: CanvasTool) => void
+interface CanvasToolStore {
+    activeTool: Tool
+    setActiveTool: (tool: Tool) => void
 }
 
-export const useCanvasToolStore = create<CanvasToolState>((set) => ({
+export const useCanvasToolStore = create<CanvasToolStore>((set) => ({
     activeTool: "select",
     setActiveTool: (tool) => set({ activeTool: tool }),
 }))

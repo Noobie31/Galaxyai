@@ -38,3 +38,26 @@ export async function POST(req: Request) {
 
     return NextResponse.json(run)
 }
+
+export async function PATCH(req: Request) {
+    const { userId } = await auth()
+    if (!userId)
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+    const body = await req.json()
+    const { runId, status, completedAt } = body
+
+    if (!runId)
+        return NextResponse.json({ error: "runId required" }, { status: 400 })
+
+    const run = await prisma.workflowRun.update({
+        where: { id: runId },
+        data: {
+            status,
+            ...(completedAt ? { completedAt: new Date(completedAt) } : {}),
+        },
+        include: { nodeExecutions: true },
+    })
+
+    return NextResponse.json(run)
+}

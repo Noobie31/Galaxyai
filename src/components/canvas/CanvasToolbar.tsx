@@ -5,12 +5,12 @@ import { useReactFlow, useViewport, Panel } from "@xyflow/react"
 import { useWorkflowStore } from "@/store/workflowStore"
 import { useHistoryStore } from "@/store/historyStore"
 import { useCanvasToolStore } from "@/store/canvasToolStore"
+import { useExecutionStore } from "@/store/executionStore"
 import { useRouter } from "next/navigation"
-import { useClerk } from "@clerk/nextjs"
 import {
   MousePointer2, Hand, Scissors, Sparkles,
   Plus, Type, ImageIcon, Video, Brain, Crop, Film,
-  Undo2, Redo2, ArrowLeft, Moon, Sun, Share2, Check,
+  Undo2, Redo2, ArrowLeft, Share2, Check, Play, History, Download, Upload,
 } from "lucide-react"
 
 // ── Tooltip — appears ABOVE toolbar buttons ──
@@ -188,24 +188,67 @@ const NodesIcon = () => (
   </svg>
 )
 
-interface ToolbarProps {
-  onHistoryToggle: () => void
-}
-
-export default function CanvasToolbar({ onHistoryToggle }: ToolbarProps) {
+export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: () => void }) {
   const { addNodes, fitView } = useReactFlow()
-  const { zoom } = useViewport()
   const { activeTool, setActiveTool } = useCanvasToolStore()
   const { undo, redo, past, future } = useHistoryStore()
-  const { workflowName, setWorkflowName, isSaving } = useWorkflowStore()
+  const { workflowName, setWorkflowName, isSaving, nodes, edges } = useWorkflowStore()
+  const { isRunning } = useExecutionStore()
   const router = useRouter()
 
   const [addOpen, setAddOpen] = useState(false)
   const [presetsOpen, setPresetsOpen] = useState(false)
-  const [darkMode, setDarkMode] = useState(true)
   const [editingName, setEditingName] = useState(false)
   const [shareOk, setShareOk] = useState(false)
-  const [historyActive, setHistoryActive] = useState(false)
+  const [exportOk, setExportOk] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const importRef = useRef<HTMLInputElement>(null)
+
+  const handleExport = () => {
+    const { nodes, edges, workflowName } = useWorkflowStore.getState()
+    const data = { name: workflowName, nodes, edges, exportedAt: new Date().toISOString() }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `${workflowName || "workflow"}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    setExportOk(true)
+    setTimeout(() => setExportOk(false), 2000)
+  }
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target?.result as string)
+        if (!data.nodes || !data.edges) throw new Error("Invalid workflow JSON")
+        if (data.name) useWorkflowStore.getState().setWorkflowName(data.name)
+        useWorkflowStore.getState().setNodes(data.nodes)
+        useWorkflowStore.getState().setEdges(data.edges)
+        fitView({ duration: 500, padding: 0.1 })
+      } catch {
+        alert("Invalid workflow file. Please export a valid workflow JSON.")
+      }
+    }
+    reader.readAsText(file)
+    // Reset input so same file can be re-imported
+    e.target.value = ""
+  }
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return
+    const h = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    setTimeout(() => document.addEventListener("mousedown", h), 50)
+    return () => document.removeEventListener("mousedown", h)
+  }, [menuOpen])
 
   const handleUndo = () => {
     const entry = undo()
@@ -232,7 +275,6 @@ export default function CanvasToolbar({ onHistoryToggle }: ToolbarProps) {
     })
   }
 
-  // Load the sample workflow directly into the store (no API needed)
   const handleLoadSample = () => {
     useWorkflowStore.getState().setNodes(SAMPLE_NODES as any)
     useWorkflowStore.getState().setEdges(SAMPLE_EDGES as any)
@@ -245,18 +287,11 @@ export default function CanvasToolbar({ onHistoryToggle }: ToolbarProps) {
     setTimeout(() => setShareOk(false), 2000)
   }
 
-  const toggleDarkMode = () => {
-    setDarkMode((d) => {
-      const next = !d
-      document.documentElement.style.setProperty("--bg", next ? "#0a0a0a" : "#f5f5f5")
-      document.body.style.background = next ? "#0a0a0a" : "#f5f5f5"
-      return next
-    })
-  }
-
-  const handleHistoryToggle = () => {
-    setHistoryActive((v) => !v)
-    onHistoryToggle()
+  const handleRunAll = async () => {
+    const { workflowId } = useWorkflowStore.getState()
+    if (!workflowId || isRunning) return
+    const { runWorkflow } = await import("@/lib/execution-engine")
+    runWorkflow(workflowId, nodes, edges, "full")
   }
 
   const ToolBtn = ({ children, isActive, onClick, disabled, title }: any) => (
@@ -335,30 +370,112 @@ export default function CanvasToolbar({ onHistoryToggle }: ToolbarProps) {
 
       <Panel position="top-right" style={{ margin: "10px 10px 0 0", pointerEvents: "all" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Dark mode toggle */}
-          <button onClick={toggleDarkMode} style={{ ...topBtnStyle, width: 32, padding: 0, justifyContent: "center" }} title="Toggle dark mode">
-            {darkMode ? <Moon size={13} /> : <Sun size={13} />}
-          </button>
 
-          {/* Share */}
-          <button onClick={handleShare} style={{ ...topBtnStyle, color: shareOk ? "#4ade80" : "rgba(255,255,255,0.55)" }}>
-            {shareOk ? <Check size={13} /> : <Share2 size={13} />}
-            {shareOk ? "Copied!" : "Share"}
-          </button>
+          {/* ── Dropdown: Share / Export / Import / Run History ── */}
+          <div ref={menuRef} style={{ position: "relative" }}>
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              style={{
+                ...topBtnStyle,
+                background: menuOpen ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.55)",
+                paddingLeft: 10, paddingRight: 8, gap: 4,
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" />
+                <path d="M8 21h8M12 17v4" />
+              </svg>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ color: "rgba(255,255,255,0.3)" }}>
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
 
-          {/* Version History toggle */}
+            {menuOpen && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 8px)", right: 0,
+                background: "#141414", border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: 12, padding: 6, width: 200, zIndex: 9999,
+                boxShadow: "0 8px 32px rgba(0,0,0,0.7)",
+              }}>
+                <button onClick={() => { handleShare(); setMenuOpen(false) }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "none", borderRadius: 8, background: "none", cursor: "pointer", color: shareOk ? "#4ade80" : "rgba(255,255,255,0.65)", fontSize: 13 }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)" }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "none" }}
+                >
+                  {shareOk ? <Check size={14} /> : <Share2 size={14} />}
+                  {shareOk ? "Link copied!" : "Copy share link"}
+                </button>
+
+                <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }} />
+
+                <button onClick={() => { handleExport(); setMenuOpen(false) }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "none", borderRadius: 8, background: "none", cursor: "pointer", color: exportOk ? "#4ade80" : "rgba(255,255,255,0.65)", fontSize: 13 }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)" }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "none" }}
+                >
+                  {exportOk ? <Check size={14} /> : <Download size={14} />}
+                  {exportOk ? "Exported!" : "Export as JSON"}
+                </button>
+
+                <button onClick={() => { importRef.current?.click(); setMenuOpen(false) }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "none", borderRadius: 8, background: "none", cursor: "pointer", color: "rgba(255,255,255,0.65)", fontSize: 13 }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)" }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "none" }}
+                >
+                  <Upload size={14} />
+                  Import from JSON
+                </button>
+                <input ref={importRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={handleImport} />
+
+                {onHistoryToggle && (
+                  <>
+                    <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }} />
+                    <button onClick={() => { onHistoryToggle(); setMenuOpen(false) }}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "none", borderRadius: 8, background: "none", cursor: "pointer", color: "rgba(255,255,255,0.65)", fontSize: 13 }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)" }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "none" }}
+                    >
+                      <History size={14} />
+                      Run History
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Run All */}
           <button
-            onClick={handleHistoryToggle}
-            style={{ ...topBtnStyle, background: historyActive ? "rgba(99,102,241,0.15)" : "rgba(0,0,0,0.55)", borderColor: historyActive ? "rgba(99,102,241,0.4)" : "rgba(255,255,255,0.09)", color: historyActive ? "#a78bfa" : "rgba(255,255,255,0.55)" }}
-            title="Version History"
+            onClick={handleRunAll}
+            disabled={isRunning}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: isRunning ? "rgba(255,255,255,0.08)" : "white",
+              color: isRunning ? "rgba(255,255,255,0.35)" : "black",
+              border: "none", borderRadius: 8,
+              cursor: isRunning ? "not-allowed" : "pointer",
+              padding: "0 14px", height: 32,
+              fontSize: 13, fontWeight: 600,
+              transition: "all 0.15s",
+            }}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" strokeLinecap="round" />
-            </svg>
-            Version History
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M6 9l6 6 6-6" />
-            </svg>
+            {isRunning ? (
+              <>
+                <div style={{
+                  width: 11, height: 11,
+                  border: "2px solid rgba(0,0,0,0.2)",
+                  borderTop: "2px solid rgba(0,0,0,0.6)",
+                  borderRadius: "50%",
+                  animation: "spin 0.7s linear infinite",
+                }} />
+                Running...
+              </>
+            ) : (
+              <>
+                <Play size={11} fill="black" />
+                Run All
+              </>
+            )}
           </button>
 
           {/* Turn into app */}
@@ -371,7 +488,7 @@ export default function CanvasToolbar({ onHistoryToggle }: ToolbarProps) {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
             </svg>
-            Turn workflow into app
+            Turn into app
           </button>
         </div>
       </Panel>
@@ -395,15 +512,6 @@ export default function CanvasToolbar({ onHistoryToggle }: ToolbarProps) {
               </ToolBtn>
             </Tip>
           </div>
-
-          <button style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "#141414", border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 12, padding: "7px 12px",
-            color: "rgba(255,255,255,0.28)", fontSize: 12, cursor: "default",
-          }}>
-            <span style={{ fontFamily: "monospace" }}>⌘</span> Keyboard shortcuts
-          </button>
         </div>
       </Panel>
 
@@ -447,6 +555,17 @@ export default function CanvasToolbar({ onHistoryToggle }: ToolbarProps) {
           </Tip>
         </div>
       </Panel>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }
+        .cut-mode .react-flow__edge:hover .react-flow__edge-path {
+          stroke: #f43f5e !important;
+          stroke-width: 3 !important;
+          cursor: crosshair !important;
+        }
+        .cut-mode .react-flow__edge:hover {
+          cursor: crosshair !important;
+        }
+      `}</style>
     </>
   )
 }

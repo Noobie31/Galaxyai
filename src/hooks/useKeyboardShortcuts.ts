@@ -1,136 +1,43 @@
-"use client"
-
-import { useEffect, useRef, useCallback } from "react"
-import { useWorkflowStore } from "@/store/workflowStore"
+import { useEffect } from "react"
 import { useCanvasToolStore } from "@/store/canvasToolStore"
-import { useReactFlow } from "@xyflow/react"
+import { useHistoryStore } from "@/store/historyStore"
+import { useWorkflowStore } from "@/store/workflowStore"
 
-/**
- * Drop this hook inside WorkflowClient component
- * Implements ALL keyboard shortcuts:
- * - Ctrl+S → save
- * - Ctrl+Z → undo
- * - Ctrl+Shift+Z → redo
- * - Ctrl+Enter → run workflow
- * - T → add text node
- * - I → add image node
- * - V → add video node
- * - L → add LLM node
- * - C → add crop node
- * - E → add extract frame node
- * - Escape → deselect
- * - Ctrl+0 → fit view
- */
-export function useKeyboardShortcuts({
-    workflowId,
-    saveWorkflow,
-    undo,
-    redo,
-}: {
-    workflowId: string
-    saveWorkflow: () => Promise<void>
-    undo: () => any
-    redo: () => any
-}) {
-    const { setNodes, setEdges, nodes, edges } = useWorkflowStore()
+export function useKeyboardShortcuts() {
     const { setActiveTool } = useCanvasToolStore()
-    const { addNodes, fitView } = useReactFlow()
-
-    const addNode = useCallback((type: string) => {
-        // Don't add node if user is typing in an input
-        const activeEl = document.activeElement
-        if (
-            activeEl instanceof HTMLInputElement ||
-            activeEl instanceof HTMLTextAreaElement ||
-            (activeEl as HTMLElement)?.isContentEditable
-        ) return
-
-        const newNode = {
-            id: `${type}-${Date.now()}`,
-            type,
-            position: { x: 200 + Math.random() * 200, y: 200 + Math.random() * 200 },
-            data: {},
-        }
-        addNodes(newNode)
-    }, [addNodes])
+    const { undo, redo } = useHistoryStore()
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            const ctrl = e.ctrlKey || e.metaKey
-            const shift = e.shiftKey
+            const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
+            // Don't fire shortcuts when typing in inputs/textareas
+            if (tag === "input" || tag === "textarea") return
 
-            // Ctrl+S → save
-            if (ctrl && e.key === "s") {
-                e.preventDefault()
-                saveWorkflow()
-                return
-            }
+            // Tool shortcuts
+            if (e.key === "v" || e.key === "V") setActiveTool("select")
+            if (e.key === "h" || e.key === "H") setActiveTool("pan")
+            if (e.key === "c" || e.key === "C") setActiveTool("cut")
 
-            // Ctrl+Z → undo
-            if (ctrl && !shift && e.key === "z") {
+            // Undo / Redo
+            if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
                 e.preventDefault()
                 const entry = undo()
                 if (entry) {
-                    setNodes(entry.nodes)
-                    setEdges(entry.edges)
+                    useWorkflowStore.getState().setNodes(entry.nodes)
+                    useWorkflowStore.getState().setEdges(entry.edges)
                 }
-                return
             }
-
-            // Ctrl+Shift+Z → redo
-            if (ctrl && shift && e.key === "z") {
+            if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
                 e.preventDefault()
                 const entry = redo()
                 if (entry) {
-                    setNodes(entry.nodes)
-                    setEdges(entry.edges)
+                    useWorkflowStore.getState().setNodes(entry.nodes)
+                    useWorkflowStore.getState().setEdges(entry.edges)
                 }
-                return
-            }
-
-            // Ctrl+Enter → run workflow
-            if (ctrl && e.key === "Enter") {
-                e.preventDefault()
-                import("@/lib/execution-engine").then(({ runWorkflow }) => {
-                    runWorkflow(workflowId, nodes, edges, "full")
-                })
-                return
-            }
-
-            // Ctrl+0 → fit view
-            if (ctrl && e.key === "0") {
-                e.preventDefault()
-                fitView({ duration: 300 })
-                return
-            }
-
-            // Escape → switch to select tool
-            if (e.key === "Escape") {
-                setActiveTool("select")
-                return
-            }
-
-            // Single-key shortcuts (skip if in input)
-            const activeEl = document.activeElement
-            if (
-                activeEl instanceof HTMLInputElement ||
-                activeEl instanceof HTMLTextAreaElement ||
-                (activeEl as HTMLElement)?.isContentEditable
-            ) return
-
-            switch (e.key.toLowerCase()) {
-                case "t": addNode("textInput"); break
-                case "i": addNode("imageUpload"); break
-                case "v": addNode("videoUpload"); break
-                case "l": addNode("llm"); break
-                case "c": addNode("cropImage"); break
-                case "e": addNode("extractFrame"); break
-                case "h": setActiveTool("pan"); break
-                case "v": setActiveTool("select"); break // v also = select (after node add check)
             }
         }
 
         window.addEventListener("keydown", handler)
         return () => window.removeEventListener("keydown", handler)
-    }, [workflowId, nodes, edges, saveWorkflow, undo, redo, addNode, setActiveTool, fitView, setNodes, setEdges])
+    }, [setActiveTool, undo, redo])
 }

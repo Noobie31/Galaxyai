@@ -102,7 +102,7 @@ function WorkflowClientInner({ workflowId, workflowName, initialNodes, initialEd
         <WorkflowCanvas onHistoryToggle={() => setShowHistory((v) => !v)} />
       </div>
 
-      {/* Right sidebar — shown when history toggled */}
+      {/* Right sidebar - run history */}
       {showHistory && (
         <RightSidebar
           workflowId={workflowId}

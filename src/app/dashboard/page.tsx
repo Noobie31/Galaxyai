@@ -8,15 +8,27 @@ export default async function DashboardPage() {
     if (!userId) redirect("/sign-in")
 
     const workflows = await prisma.workflow.findMany({
-        where: { userId: userId! },
+        where: { userId },
         orderBy: { updatedAt: "desc" },
+        select: {
+            id: true,
+            name: true,
+            createdAt: true,
+            updatedAt: true,
+            nodes: true,
+            edges: true,
+        },
     })
 
+    // Serialize dates and cast JSON fields to avoid Prisma JsonValue type errors
     const serialized = workflows.map((w) => ({
-        ...w,
+        id: w.id,
+        name: w.name,
         createdAt: w.createdAt.toISOString(),
         updatedAt: w.updatedAt.toISOString(),
+        nodes: (w.nodes ?? []) as any[],
+        edges: (w.edges ?? []) as any[],
     }))
 
-    return <DashboardClient workflows={serialized} userId={userId!} />
+    return <DashboardClient workflows={serialized} userId={userId} />
 }

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { useUser, useClerk } from "@clerk/nextjs"
 import {
-  Plus, Search, ChevronDown, Moon, Sun,
+  Plus, Search, ChevronDown,
   Home, ImageIcon, Video, Pen, Type, Folder,
   Clock, ExternalLink, Pencil, Copy, Trash2, LogOut, User,
 } from "lucide-react"
@@ -13,20 +13,26 @@ interface Workflow {
   id: string
   name: string
   updatedAt: string
-  nodes?: any[]
-  edges?: any[]
+  createdAt?: string
+  userId?: string
+  nodes?: any[] | null
+  edges?: any[] | null
 }
 
-export default function DashboardClient() {
+interface Props {
+  workflows?: Workflow[]
+  userId?: string
+}
+
+export default function DashboardClient({ workflows: initialWorkflows = [], userId }: Props) {
   const router = useRouter()
   const { user } = useUser()
   const { signOut } = useClerk()
 
-  const [workflows, setWorkflows] = useState<Workflow[]>([])
+  const [workflows, setWorkflows] = useState<Workflow[]>(initialWorkflows)
   const [activeTab, setActiveTab] = useState("Projects")
   const [searchQuery, setSearchQuery] = useState("")
   const [isCreating, setIsCreating] = useState(false)
-  const [isDark, setIsDark] = useState(true)
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; workflow: Workflow } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -50,28 +56,15 @@ export default function DashboardClient() {
     return () => document.removeEventListener("mousedown", handler)
   }, [])
 
-  const toggleDarkMode = () => {
-    const next = !isDark
-    setIsDark(next)
-    if (next) {
-      document.documentElement.classList.remove("light")
-      document.body.style.background = "#0a0a0a"
-      document.body.style.color = "white"
-    } else {
-      document.documentElement.classList.add("light")
-      document.body.style.background = "#f8f8f8"
-      document.body.style.color = "#111"
-    }
-  }
-
-  const bg = isDark ? "#0a0a0a" : "#f5f5f5"
-  const cardBg = isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.03)"
-  const cardBorder = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.1)"
-  const navBg = isDark ? "rgba(10,10,10,0.96)" : "rgba(248,248,248,0.96)"
-  const navBorder = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)"
-  const textPrimary = isDark ? "white" : "#111"
-  const textSecondary = isDark ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.45)"
-  const textMuted = isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.25)"
+  // Always dark
+  const bg = "#0a0a0a"
+  const cardBg = "rgba(255,255,255,0.02)"
+  const cardBorder = "rgba(255,255,255,0.06)"
+  const navBg = "rgba(10,10,10,0.96)"
+  const navBorder = "rgba(255,255,255,0.06)"
+  const textPrimary = "white"
+  const textSecondary = "rgba(255,255,255,0.45)"
+  const textMuted = "rgba(255,255,255,0.25)"
 
   const fetchWorkflows = async () => {
     try {
@@ -168,19 +161,19 @@ export default function DashboardClient() {
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 120 }}>
           <div style={{
             width: 28, height: 28,
-            background: isDark ? "white" : "#111",
+            background: "white",
             borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
           }}>
-            <span style={{ color: isDark ? "black" : "white", fontWeight: 900, fontSize: 13 }}>N</span>
+            <span style={{ color: "black", fontWeight: 900, fontSize: 13 }}>N</span>
           </div>
         </div>
 
         {/* Center: icon tabs */}
         <div style={{
           display: "flex", alignItems: "center", gap: 1,
-          background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
+          background: "rgba(255,255,255,0.05)",
           borderRadius: 12, padding: "3px",
-          border: `1px solid ${isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.08)"}`,
+          border: `1px solid rgba(255,255,255,0.07)`,
         }}>
           {[
             { icon: <Home size={15} />, label: "Home" },
@@ -200,19 +193,14 @@ export default function DashboardClient() {
               label: "Nodes", active: true,
             },
           ].map((item) => (
-            <NavIconBtn key={item.label} {...item} isDark={isDark} textSecondary={textSecondary} />
+            <NavIconBtn key={item.label} {...item} textSecondary={textSecondary} />
           ))}
         </div>
 
         {/* Right */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 120, justifyContent: "flex-end" }}>
           {/* Search */}
-          <NavBtn isDark={isDark}><Search size={15} /></NavBtn>
-
-          {/* Dark mode toggle */}
-          <NavBtn isDark={isDark} onClick={toggleDarkMode} title={isDark ? "Switch to light mode" : "Switch to dark mode"}>
-            {isDark ? <Moon size={15} /> : <Sun size={15} />}
-          </NavBtn>
+          <NavBtn><Search size={15} /></NavBtn>
 
           <button style={{
             display: "flex", alignItems: "center", gap: 5,
@@ -241,13 +229,13 @@ export default function DashboardClient() {
             {userMenuOpen && (
               <div style={{
                 position: "absolute", top: "calc(100% + 8px)", right: 0,
-                background: isDark ? "#1a1a1a" : "#fff",
-                border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)"}`,
+                background: "#1a1a1a",
+                border: `1px solid rgba(255,255,255,0.12)`,
                 borderRadius: 12, padding: 6, minWidth: 220,
                 boxShadow: "0 8px 32px rgba(0,0,0,0.5)", zIndex: 200,
               }}>
                 {/* User info */}
-                <div style={{ padding: "8px 10px 10px", borderBottom: `1px solid ${isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)"}`, marginBottom: 4 }}>
+                <div style={{ padding: "8px 10px 10px", borderBottom: `1px solid rgba(255,255,255,0.07)`, marginBottom: 4 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <div style={{
                       width: 34, height: 34, borderRadius: "50%",
@@ -274,7 +262,7 @@ export default function DashboardClient() {
                     background: "none", cursor: "pointer",
                     color: textSecondary, fontSize: 13,
                   }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)")}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
                   >
                     {item.icon}
@@ -282,7 +270,7 @@ export default function DashboardClient() {
                   </button>
                 ))}
 
-                <div style={{ height: 1, background: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)", margin: "3px 0" }} />
+                <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "3px 0" }} />
 
                 {/* Sign out */}
                 <button
@@ -311,7 +299,7 @@ export default function DashboardClient() {
         <div style={{ padding: "20px 60px 0" }}>
           <div style={{
             borderRadius: 14, overflow: "hidden",
-            position: "relative", height: 220, background: isDark ? "#111" : "#e8e8e8",
+            position: "relative", height: 220, background: "#111",
           }}>
             <div style={{
               position: "absolute", inset: 0,
@@ -385,8 +373,8 @@ export default function DashboardClient() {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search projects..."
                   style={{
-                    background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
-                    border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.1)"}`,
+                    background: "rgba(255,255,255,0.05)",
+                    border: `1px solid rgba(255,255,255,0.08)`,
                     borderRadius: 8, paddingLeft: 28, paddingRight: 12,
                     paddingTop: 6, paddingBottom: 6,
                     color: textPrimary, fontSize: 13, outline: "none", width: 190,
@@ -395,8 +383,8 @@ export default function DashboardClient() {
               </div>
               <button style={{
                 display: "flex", alignItems: "center", gap: 5,
-                background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
-                border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.1)"}`,
+                background: "rgba(255,255,255,0.05)",
+                border: `1px solid rgba(255,255,255,0.08)`,
                 borderRadius: 8, padding: "6px 12px",
                 color: textSecondary, fontSize: 13, cursor: "pointer",
               }}>
@@ -404,7 +392,7 @@ export default function DashboardClient() {
               </button>
             </div>
           </div>
-          <div style={{ height: 1, background: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)", marginTop: 0 }} />
+          <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginTop: 0 }} />
         </div>
 
         {/* Grid */}
@@ -416,14 +404,13 @@ export default function DashboardClient() {
                 description="Upload a product photo and generate professional marketing copy with AI"
                 nodeCount={9}
                 onClick={loadSampleWorkflow}
-                isDark={isDark}
                 textPrimary={textPrimary}
                 textSecondary={textSecondary}
               />
             </div>
           ) : activeTab === "Projects" ? (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 }}>
-              <WorkflowCard isNew onClick={createWorkflow} isCreating={isCreating} isDark={isDark} textPrimary={textPrimary} textSecondary={textSecondary} textMuted={textMuted} />
+              <WorkflowCard isNew onClick={createWorkflow} isCreating={isCreating} textPrimary={textPrimary} textSecondary={textSecondary} textMuted={textMuted} />
               {filteredWorkflows.map((wf) => (
                 <WorkflowCard
                   key={wf.id} workflow={wf}
@@ -437,12 +424,12 @@ export default function DashboardClient() {
                     setContextMenu({ x: e.clientX, y: e.clientY, workflow: wf })
                   }}
                   formatTime={formatTime}
-                  isDark={isDark} textPrimary={textPrimary} textSecondary={textSecondary} textMuted={textMuted}
+                  textPrimary={textPrimary} textSecondary={textSecondary} textMuted={textMuted}
                 />
               ))}
             </div>
           ) : (
-            <EmptyState isDark={isDark} textMuted={textMuted} />
+            <EmptyState textMuted={textMuted} />
           )}
         </div>
       </div>
@@ -451,8 +438,8 @@ export default function DashboardClient() {
       {contextMenu && (
         <div ref={contextRef} onClick={(e) => e.stopPropagation()} style={{
           position: "fixed", top: contextMenu.y, left: contextMenu.x,
-          background: isDark ? "#1a1a1a" : "#fff",
-          border: `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+          background: "#1a1a1a",
+          border: `1px solid rgba(255,255,255,0.1)`,
           borderRadius: 10, padding: 4, zIndex: 1000, minWidth: 160,
           boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
         }}>
@@ -464,14 +451,14 @@ export default function DashboardClient() {
             { icon: <Trash2 size={13} />, label: "Delete", onClick: () => deleteWorkflow(contextMenu.workflow.id), danger: true },
           ].map((item, i) =>
             item === null ? (
-              <div key={i} style={{ height: 1, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)", margin: "3px 0" }} />
+              <div key={i} style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "3px 0" }} />
             ) : (
               <button key={item.label} onClick={item.onClick} style={{
                 width: "100%", display: "flex", alignItems: "center", gap: 9,
                 padding: "8px 10px", border: "none", borderRadius: 7, background: "none",
-                cursor: "pointer", color: item.danger ? "#f87171" : (isDark ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.7)"), fontSize: 13,
+                cursor: "pointer", color: item.danger ? "#f87171" : "rgba(255,255,255,0.7)", fontSize: 13,
               }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = item.danger ? "rgba(248,113,113,0.08)" : (isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)"))}
+                onMouseEnter={(e) => (e.currentTarget.style.background = item.danger ? "rgba(248,113,113,0.08)" : "rgba(255,255,255,0.06)")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
               >
                 {item.icon}{item.label}
@@ -486,32 +473,32 @@ export default function DashboardClient() {
 
 /* ── Shared small components ── */
 
-function NavBtn({ children, onClick, isDark, title }: { children: React.ReactNode; onClick?: () => void; isDark: boolean; title?: string }) {
+function NavBtn({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
   return (
-    <button onClick={onClick} title={title} style={{
+    <button onClick={onClick} style={{
       width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center",
       background: "none", border: "none", cursor: "pointer", borderRadius: 8,
-      color: isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)",
+      color: "rgba(255,255,255,0.4)",
     }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)"; e.currentTarget.style.color = isDark ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.7)" }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)" }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.07)"; e.currentTarget.style.color = "rgba(255,255,255,0.7)" }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "rgba(255,255,255,0.4)" }}
     >
       {children}
     </button>
   )
 }
 
-function NavIconBtn({ icon, label, active, isDark, textSecondary }: any) {
+function NavIconBtn({ icon, label, active, textSecondary }: any) {
   const [show, setShow] = useState(false)
   return (
     <div style={{ position: "relative" }} onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
       <button style={{
         width: 34, height: 30, display: "flex", alignItems: "center", justifyContent: "center",
-        background: active ? (isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)") : "none",
+        background: active ? "rgba(255,255,255,0.12)" : "none",
         border: "none", borderRadius: 8, cursor: "pointer",
-        color: active ? (isDark ? "white" : "#111") : textSecondary,
+        color: active ? "white" : textSecondary,
       }}
-        onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.05)"; e.currentTarget.style.color = isDark ? "rgba(255,255,255,0.75)" : "rgba(0,0,0,0.75)" } }}
+        onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = "rgba(255,255,255,0.07)"; e.currentTarget.style.color = "rgba(255,255,255,0.75)" } }}
         onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "none"; e.currentTarget.style.color = textSecondary } }}
       >
         {icon}
@@ -519,10 +506,10 @@ function NavIconBtn({ icon, label, active, isDark, textSecondary }: any) {
       {show && (
         <div style={{
           position: "absolute", top: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
-          background: isDark ? "#1e1e1e" : "#fff",
-          border: `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+          background: "#1e1e1e",
+          border: `1px solid rgba(255,255,255,0.1)`,
           borderRadius: 6, padding: "4px 8px",
-          fontSize: 11, color: isDark ? "rgba(255,255,255,0.8)" : "rgba(0,0,0,0.8)",
+          fontSize: 11, color: "rgba(255,255,255,0.8)",
           whiteSpace: "nowrap", pointerEvents: "none", zIndex: 200,
           boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
         }}>
@@ -533,14 +520,10 @@ function NavIconBtn({ icon, label, active, isDark, textSecondary }: any) {
   )
 }
 
-function WorkflowCard({ isNew, onClick, onContextMenu, isCreating, workflow, isRenaming, renameValue, onRenameChange, onRenameSubmit, formatTime, isDark, textPrimary, textSecondary, textMuted }: any) {
+function WorkflowCard({ isNew, onClick, onContextMenu, isCreating, workflow, isRenaming, renameValue, onRenameChange, onRenameSubmit, formatTime, textPrimary, textSecondary, textMuted }: any) {
   const [hovered, setHovered] = useState(false)
-  const bg = hovered
-    ? (isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)")
-    : (isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)")
-  const border = hovered
-    ? (isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.15)")
-    : (isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)")
+  const bg = hovered ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.02)"
+  const border = hovered ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)"
 
   return (
     <div onClick={onClick} onContextMenu={onContextMenu}
@@ -549,21 +532,21 @@ function WorkflowCard({ isNew, onClick, onContextMenu, isCreating, workflow, isR
     >
       <div style={{
         height: 140,
-        background: isNew ? (isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)") : (isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)"),
+        background: isNew ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.03)",
         display: "flex", alignItems: "center", justifyContent: "center",
-        borderBottom: `1px solid ${isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.06)"}`,
+        borderBottom: `1px solid rgba(255,255,255,0.05)`,
       }}>
         {isNew ? (
           <div style={{
             width: 36, height: 36, borderRadius: "50%",
-            background: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)",
+            background: "rgba(255,255,255,0.07)",
             display: "flex", alignItems: "center", justifyContent: "center",
-            border: `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+            border: `1px solid rgba(255,255,255,0.1)`,
           }}>
-            <Plus size={16} style={{ color: isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)" }} />
+            <Plus size={16} style={{ color: "rgba(255,255,255,0.4)" }} />
           </div>
         ) : (
-          <WorkflowThumbnail nodes={workflow?.nodes} edges={workflow?.edges} isDark={isDark} />
+          <WorkflowThumbnail nodes={workflow?.nodes} edges={workflow?.edges} />
         )}
       </div>
       <div style={{ padding: "10px 12px" }}>
@@ -578,8 +561,8 @@ function WorkflowCard({ isNew, onClick, onContextMenu, isCreating, workflow, isR
             onKeyDown={(e) => { if (e.key === "Enter") onRenameSubmit(); if (e.key === "Escape") onRenameChange(workflow.name) }}
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: "100%", background: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
-              border: `1px solid ${isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)"}`,
+              width: "100%", background: "rgba(255,255,255,0.08)",
+              border: `1px solid rgba(255,255,255,0.2)`,
               borderRadius: 5, padding: "3px 7px", color: textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box",
             }}
           />
@@ -599,12 +582,12 @@ function WorkflowCard({ isNew, onClick, onContextMenu, isCreating, workflow, isR
   )
 }
 
-function WorkflowThumbnail({ nodes, edges, isDark }: { nodes?: any[]; edges?: any[]; isDark: boolean }) {
+function WorkflowThumbnail({ nodes, edges }: { nodes?: any[]; edges?: any[] }) {
   if (!nodes?.length) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 32, height: 24, background: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)", borderRadius: 5, border: `1px solid ${isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"}` }} />
-        <div style={{ width: 44, height: 24, background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)", borderRadius: 5, border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)"}` }} />
+        <div style={{ width: 32, height: 24, background: "rgba(255,255,255,0.07)", borderRadius: 5, border: `1px solid rgba(255,255,255,0.1)` }} />
+        <div style={{ width: 44, height: 24, background: "rgba(255,255,255,0.05)", borderRadius: 5, border: `1px solid rgba(255,255,255,0.08)` }} />
       </div>
     )
   }
@@ -618,21 +601,21 @@ function WorkflowThumbnail({ nodes, edges, isDark }: { nodes?: any[]; edges?: an
         <rect key={i}
           x={8 + (i % 2) * 62} y={14 + Math.floor(i / 2) * 36}
           width={46} height={26} rx={4}
-          fill={isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.05)"}
-          stroke={isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)"} strokeWidth="1"
+          fill="rgba(255,255,255,0.07)"
+          stroke="rgba(255,255,255,0.12)" strokeWidth="1"
         />
       ))}
     </svg>
   )
 }
 
-function TemplateCard({ name, description, nodeCount, onClick, isDark, textPrimary, textSecondary }: any) {
+function TemplateCard({ name, description, nodeCount, onClick, textPrimary, textSecondary }: any) {
   const [hovered, setHovered] = useState(false)
   return (
     <div onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
       style={{
-        background: hovered ? (isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)") : (isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)"),
-        border: `1px solid ${hovered ? (isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.12)") : (isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)")}`,
+        background: hovered ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)",
+        border: `1px solid ${hovered ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.06)"}`,
         borderRadius: 12, cursor: "pointer", overflow: "hidden", transition: "all 0.15s",
       }}
     >
@@ -640,7 +623,7 @@ function TemplateCard({ name, description, nodeCount, onClick, isDark, textPrima
         height: 110,
         background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(168,85,247,0.12))",
         display: "flex", alignItems: "center", justifyContent: "center",
-        borderBottom: `1px solid ${isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.06)"}`,
+        borderBottom: `1px solid rgba(255,255,255,0.05)`,
       }}>
         <svg width="80" height="50" viewBox="0 0 80 50">
           <rect x="2" y="6" width="28" height="16" rx="3" fill="rgba(255,255,255,0.1)" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
@@ -653,7 +636,7 @@ function TemplateCard({ name, description, nodeCount, onClick, isDark, textPrima
       <div style={{ padding: "12px 14px" }}>
         <p style={{ fontSize: 14, fontWeight: 600, color: textPrimary, margin: "0 0 5px" }}>{name}</p>
         <p style={{ fontSize: 12, color: textSecondary, margin: "0 0 10px", lineHeight: 1.5 }}>{description}</p>
-        <span style={{ fontSize: 11, color: isDark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.35)", background: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)", padding: "2px 7px", borderRadius: 5 }}>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.05)", padding: "2px 7px", borderRadius: 5 }}>
           {nodeCount} nodes
         </span>
       </div>
@@ -661,10 +644,10 @@ function TemplateCard({ name, description, nodeCount, onClick, isDark, textPrima
   )
 }
 
-function EmptyState({ isDark, textMuted }: any) {
+function EmptyState({ textMuted }: any) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 180, gap: 10 }}>
-      <div style={{ width: 44, height: 44, borderRadius: 12, background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Folder size={18} style={{ color: textMuted }} />
       </div>
       <p style={{ color: textMuted, fontSize: 14, margin: 0 }}>Nothing here yet</p>

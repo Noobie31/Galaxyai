@@ -1,90 +1,72 @@
 import { create } from "zustand"
-import { immer } from "zustand/middleware/immer"
 
-export type NodeStatus = "idle" | "running" | "success" | "failed"
-
-interface NodeExecutionState {
-    status: NodeStatus
+interface NodeState {
+    status: "idle" | "running" | "success" | "failed"
     output?: any
     error?: string
     startTime?: number
     duration?: number
 }
 
-interface ExecutionState {
+interface ExecutionStore {
     isRunning: boolean
-    currentRunId: string | null
-    nodeStates: Record<string, NodeExecutionState>
+    nodeStates: Record<string, NodeState>
 
-    // Actions
-    setIsRunning: (running: boolean) => void
-    setCurrentRunId: (id: string | null) => void
-    setNodeStatus: (nodeId: string, status: NodeStatus) => void
+    setIsRunning: (v: boolean) => void
+    resetNodeStates: () => void
+
+    setNodeStatus: (nodeId: string, status: NodeState["status"]) => void
     setNodeOutput: (nodeId: string, output: any) => void
     setNodeError: (nodeId: string, error: string) => void
     setNodeStartTime: (nodeId: string, time: number) => void
     setNodeDuration: (nodeId: string, duration: number) => void
-    resetNodeStates: () => void
-    reset: () => void
 }
 
-export const useExecutionStore = create<ExecutionState>()(
-    immer((set) => ({
-        isRunning: false,
-        currentRunId: null,
-        nodeStates: {},
+export const useExecutionStore = create<ExecutionStore>((set) => ({
+    isRunning: false,
+    nodeStates: {},
 
-        setIsRunning: (running) => set((state) => {
-            state.isRunning = running
-        }),
+    setIsRunning: (v) => set({ isRunning: v }),
 
-        setCurrentRunId: (id) => set((state) => {
-            state.currentRunId = id
-        }),
+    resetNodeStates: () => set({ nodeStates: {} }),
 
-        setNodeStatus: (nodeId, status) => set((state) => {
-            if (!state.nodeStates[nodeId]) {
-                state.nodeStates[nodeId] = { status: "idle" }
-            }
-            state.nodeStates[nodeId].status = status
-        }),
+    setNodeStatus: (nodeId, status) =>
+        set((s) => ({
+            nodeStates: {
+                ...s.nodeStates,
+                [nodeId]: { ...s.nodeStates[nodeId], status },
+            },
+        })),
 
-        setNodeOutput: (nodeId, output) => set((state) => {
-            if (!state.nodeStates[nodeId]) {
-                state.nodeStates[nodeId] = { status: "idle" }
-            }
-            state.nodeStates[nodeId].output = output
-        }),
+    setNodeOutput: (nodeId, output) =>
+        set((s) => ({
+            nodeStates: {
+                ...s.nodeStates,
+                [nodeId]: { ...s.nodeStates[nodeId], output },
+            },
+        })),
 
-        setNodeError: (nodeId, error) => set((state) => {
-            if (!state.nodeStates[nodeId]) {
-                state.nodeStates[nodeId] = { status: "idle" }
-            }
-            state.nodeStates[nodeId].error = error
-        }),
+    setNodeError: (nodeId, error) =>
+        set((s) => ({
+            nodeStates: {
+                ...s.nodeStates,
+                [nodeId]: { ...s.nodeStates[nodeId], error },
+            },
+        })),
 
-        setNodeStartTime: (nodeId, time) => set((state) => {
-            if (!state.nodeStates[nodeId]) {
-                state.nodeStates[nodeId] = { status: "idle" }
-            }
-            state.nodeStates[nodeId].startTime = time
-        }),
+    setNodeStartTime: (nodeId, startTime) =>
+        set((s) => ({
+            nodeStates: {
+                ...s.nodeStates,
+                [nodeId]: { ...s.nodeStates[nodeId], startTime },
+            },
+        })),
 
-        setNodeDuration: (nodeId, duration) => set((state) => {
-            if (!state.nodeStates[nodeId]) {
-                state.nodeStates[nodeId] = { status: "idle" }
-            }
-            state.nodeStates[nodeId].duration = duration
-        }),
-
-        resetNodeStates: () => set((state) => {
-            state.nodeStates = {}
-        }),
-
-        reset: () => set((state) => {
-            state.isRunning = false
-            state.currentRunId = null
-            state.nodeStates = {}
-        }),
-    }))
-)
+    setNodeDuration: (nodeId, duration) =>
+        set((s) => ({
+            nodeStates: {
+                ...s.nodeStates,
+                [nodeId]: { ...s.nodeStates[nodeId], duration },
+            },
+        })),
+}))

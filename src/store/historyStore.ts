@@ -1,62 +1,51 @@
 import { create } from "zustand"
-import { immer } from "zustand/middleware/immer"
-import { Node, Edge } from "@xyflow/react"
 
 interface HistoryEntry {
-    nodes: Node[]
-    edges: Edge[]
+    nodes: any[]
+    edges: any[]
 }
 
-interface HistoryState {
+interface HistoryStore {
     past: HistoryEntry[]
     future: HistoryEntry[]
 
     pushHistory: (entry: HistoryEntry) => void
     undo: () => HistoryEntry | null
     redo: () => HistoryEntry | null
-    clear: () => void
+    clearHistory: () => void
 }
 
-export const useHistoryStore = create<HistoryState>()(
-    immer((set, get) => ({
-        past: [],
-        future: [],
+export const useHistoryStore = create<HistoryStore>((set, get) => ({
+    past: [],
+    future: [],
 
-        pushHistory: (entry) => set((state) => {
-            state.past.push(entry)
-            state.future = []
-            if (state.past.length > 50) {
-                state.past.shift()
-            }
-        }),
+    pushHistory: (entry) =>
+        set((s) => ({
+            past: [...s.past.slice(-49), entry], // keep max 50 entries
+            future: [], // clear redo stack on new action
+        })),
 
-        undo: () => {
-            const { past } = get()
-            if (past.length === 0) return null
+    undo: () => {
+        const { past } = get()
+        if (past.length === 0) return null
+        const entry = past[past.length - 1]
+        set((s) => ({
+            past: s.past.slice(0, -1),
+            future: [entry, ...s.future],
+        }))
+        return entry
+    },
 
-            const previous = past[past.length - 1]
-            set((state) => {
-                state.past.pop()
-                state.future.unshift(previous)
-            })
-            return previous
-        },
+    redo: () => {
+        const { future } = get()
+        if (future.length === 0) return null
+        const entry = future[0]
+        set((s) => ({
+            past: [...s.past, entry],
+            future: s.future.slice(1),
+        }))
+        return entry
+    },
 
-        redo: () => {
-            const { future } = get()
-            if (future.length === 0) return null
-
-            const next = future[0]
-            set((state) => {
-                state.future.shift()
-                state.past.push(next)
-            })
-            return next
-        },
-
-        clear: () => set((state) => {
-            state.past = []
-            state.future = []
-        }),
-    }))
-)
+    clearHistory: () => set({ past: [], future: [] }),
+}))

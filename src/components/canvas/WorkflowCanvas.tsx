@@ -9,6 +9,7 @@ import "@xyflow/react/dist/style.css"
 import { useWorkflowStore } from "@/store/workflowStore"
 import { useHistoryStore } from "@/store/historyStore"
 import { useCanvasToolStore } from "@/store/canvasToolStore"
+import { useExecutionStore } from "@/store/executionStore"
 import { validateConnection, hasCycle } from "@/lib/type-validator"
 import TextNode from "@/components/nodes/TextNode"
 import ImageUploadNode from "@/components/nodes/ImageUploadNode"
@@ -61,12 +62,28 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
   const { nodes, edges, setNodes, setEdges, updateNode } = useWorkflowStore()
   const { pushHistory } = useHistoryStore()
   const { activeTool } = useCanvasToolStore()
+  const { nodeStates } = useExecutionStore()
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; selectedIds: string[] } | null>(null)
 
   // Safely get arrays - guard against undefined during hydration
   const safeNodes = nodes ?? []
   const safeEdges = edges ?? []
+
+  // Inject execution status className onto each node for glow effect
+  const nodesWithStatus = safeNodes.map((node) => {
+    const status = nodeStates[node.id]?.status
+    return {
+      ...node,
+      className: status === "running"
+        ? "node-running"
+        : status === "success"
+          ? "node-success"
+          : status === "failed"
+            ? "node-failed"
+            : "",
+    }
+  })
 
   const onNodesChange = useCallback(
     (changes: any) => setNodes(applyNodeChanges(changes, safeNodes)),
@@ -89,7 +106,7 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
       const newEdge = {
         ...connection,
         id: uuidv4(),
-        type: "default",       // ← curved bezier (default ReactFlow edge type)
+        type: "default",
         animated: true,
         style: { stroke: "#a855f7", strokeWidth: 2 },
       }
@@ -143,6 +160,42 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
     [safeNodes, updateNode]
   )
 
+  const onNodesDelete = useCallback(
+    (deletedNodes: any[]) => {
+      pushHistory({ nodes: safeNodes, edges: safeEdges })
+    },
+    [safeNodes, safeEdges, pushHistory]
+  )
+
+  const onNodeDragStop = useCallback(
+    (_: any, __: any, draggedNodes: any[]) => {
+      // Push history after drag ends so positions are undo-able
+      pushHistory({ nodes: safeNodes, edges: safeEdges })
+    },
+    [safeNodes, safeEdges, pushHistory]
+  )
+
+  const onEdgeClick = useCallback(
+    (_: React.MouseEvent, edge: any) => {
+      if (activeTool !== "cut") return
+      // Cut mode: clicking an edge deletes it
+      pushHistory({ nodes: safeNodes, edges: safeEdges })
+      const remaining = safeEdges.filter((e) => e.id !== edge.id)
+      setEdges(remaining)
+      // Update connectedHandles on the target node
+      if (edge.target && edge.targetHandle) {
+        const targetNode = safeNodes.find((n) => n.id === edge.target)
+        if (targetNode) {
+          const updated = ((targetNode.data?.connectedHandles as string[]) || []).filter(
+            (h) => h !== edge.targetHandle
+          )
+          updateNode(edge.target, { connectedHandles: updated })
+        }
+      }
+    },
+    [activeTool, safeNodes, safeEdges, setEdges, pushHistory, updateNode]
+  )
+
   const onSelectionContextMenu = useCallback(
     (e: React.MouseEvent, selectedNodes: any[]) => {
       e.preventDefault()
@@ -173,11 +226,12 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
   }
 
   const isPanMode = activeTool === "pan"
+  const isCutMode = activeTool === "cut"
 
   return (
-    <div ref={reactFlowWrapper} style={{ width: "100%", height: "100%" }} onClick={() => setContextMenu(null)}>
+    <div ref={reactFlowWrapper} className={isCutMode ? "cut-mode" : ""} style={{ width: "100%", height: "100%", cursor: isCutMode ? "crosshair" : undefined }} onClick={() => setContextMenu(null)}>
       <ReactFlow
-        nodes={safeNodes}
+        nodes={nodesWithStatus}
         edges={safeEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
@@ -185,6 +239,9 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
         onDrop={onDrop}
         onDragOver={onDragOver}
         onEdgesDelete={onEdgesDelete}
+        onNodesDelete={onNodesDelete}
+        onNodeDragStop={onNodeDragStop}
+        onEdgeClick={onEdgeClick}
         onSelectionContextMenu={onSelectionContextMenu}
         onPaneClick={() => setContextMenu(null)}
         nodeTypes={nodeTypes}
@@ -196,7 +253,7 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
         panOnScroll={false}
         style={{ background: "#0a0a0a" }}
         defaultEdgeOptions={{
-          type: "default",   // curved bezier edges
+          type: "default",
           animated: true,
           style: { stroke: "#a855f7", strokeWidth: 2 },
         }}
@@ -212,7 +269,6 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
           nodeColor="#2a2a2a"
           maskColor="rgba(0,0,0,0.6)"
         />
-        {/* Pass onHistoryToggle so toolbar header can toggle right sidebar */}
         <CanvasToolbar onHistoryToggle={onHistoryToggle} />
       </ReactFlow>
 
@@ -271,6 +327,39 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
           </button>
         </div>
       )}
+
+      <style>{`
+        @keyframes nodeGlow {
+          0%, 100% { box-shadow: 0 0 8px 2px rgba(168, 85, 247, 0.5), 0 0 20px 6px rgba(168, 85, 247, 0.2); }
+          50% { box-shadow: 0 0 16px 6px rgba(168, 85, 247, 0.8), 0 0 40px 12px rgba(168, 85, 247, 0.35); }
+        }
+        @keyframes nodeSuccessFlash {
+          0% { box-shadow: 0 0 12px 4px rgba(74, 222, 128, 0.7); }
+          100% { box-shadow: none; }
+        }
+        @keyframes nodeFailFlash {
+          0% { box-shadow: 0 0 12px 4px rgba(248, 113, 113, 0.7); }
+          100% { box-shadow: none; }
+        }
+        .react-flow__node.node-running {
+          animation: nodeGlow 1.2s ease-in-out infinite;
+          border-radius: 12px;
+          z-index: 10 !important;
+        }
+        .react-flow__node.node-success {
+          animation: nodeSuccessFlash 1s ease-out forwards;
+          border-radius: 12px;
+        }
+        .react-flow__node.node-failed {
+          animation: nodeFailFlash 1s ease-out forwards;
+          border-radius: 12px;
+        }
+        .cut-mode .react-flow__edge:hover .react-flow__edge-path {
+          stroke: #f43f5e !important;
+          stroke-width: 3 !important;
+          cursor: crosshair !important;
+        }
+      `}</style>
     </div>
   )
 }
