@@ -5,53 +5,8 @@ import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
 
-// Set ffmpeg path from ffmpeg-static
 ffmpeg.setFfmpegPath(ffmpegStatic as string)
-
-// Resolve ffprobe path without importing ffprobe-static directly
-// (direct import causes esbuild resolution errors in Trigger.dev builds)
-function getFfprobePath(): string {
-  // Try require.resolve to find the package path at runtime
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const ffprobeStatic = require("ffprobe-static")
-    if (ffprobeStatic?.path && fs.existsSync(ffprobeStatic.path)) {
-      return ffprobeStatic.path
-    }
-  } catch {
-    // ignore
-  }
-
-  // Fallback: resolve manually from node_modules
-  const platform = process.platform // "linux", "darwin", "win32"
-  const arch = process.arch         // "x64", "ia32", "arm64"
-  const ext = platform === "win32" ? ".exe" : ""
-
-  const candidates = [
-    path.join(process.cwd(), "node_modules", "ffprobe-static", "bin", platform, arch, `ffprobe${ext}`),
-    path.join(__dirname, "..", "..", "node_modules", "ffprobe-static", "bin", platform, arch, `ffprobe${ext}`),
-    "/usr/bin/ffprobe",
-    "/usr/local/bin/ffprobe",
-  ]
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate
-    }
-  }
-
-  throw new Error(
-    `ffprobe binary not found for platform=${platform} arch=${arch}. Checked: ${candidates.join(", ")}`
-  )
-}
-
-// Set ffprobe path at module load time
-try {
-  const ffprobePath = getFfprobePath()
-  ffmpeg.setFfprobePath(ffprobePath)
-} catch (e) {
-  console.warn("Warning: Could not set ffprobe path:", e)
-}
+// ✅ No module-level ffprobe setup — was crashing on Windows dev with "binary not found"
 
 async function uploadToTransloadit(
   fileBuffer: Buffer,
@@ -93,13 +48,28 @@ async function uploadToTransloadit(
   throw new Error("Upload timed out")
 }
 
-function getVideoDuration(inputPath: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(inputPath, (err: any, metadata: any) => {
-      if (err) return reject(new Error(`ffprobe failed: ${err.message}`))
-      const duration = metadata?.format?.duration || 10
-      resolve(Number(duration))
+// ✅ Parse duration from ffmpeg stderr — works with ONLY ffmpeg, no ffprobe needed
+// ffmpeg always prints "Duration: HH:MM:SS.ss" when reading any media file
+function getVideoDurationFfmpegOnly(inputPath: string): Promise<number> {
+  return new Promise((resolve) => {
+    let durationSeconds = 10 // safe default if parsing fails
+    const args = ["-i", inputPath, "-f", "null", "-"]
+    const { spawn } = require("child_process")
+    const proc = spawn(ffmpegStatic as string, args, { stdio: ["ignore", "ignore", "pipe"] })
+
+    proc.stderr.on("data", (chunk: Buffer) => {
+      const line = chunk.toString()
+      const match = line.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/)
+      if (match) {
+        const h = parseInt(match[1])
+        const m = parseInt(match[2])
+        const s = parseFloat(match[3])
+        durationSeconds = h * 3600 + m * 60 + s
+      }
     })
+
+    proc.on("close", () => resolve(durationSeconds))
+    proc.on("error", () => resolve(durationSeconds))
   })
 }
 
@@ -125,19 +95,10 @@ export const extractFrameTask = task({
       )
     }
 
-    // Re-set ffprobe path inside the task run (Trigger.dev workers may re-initialize)
-    try {
-      const ffprobePath = getFfprobePath()
-      ffmpeg.setFfprobePath(ffprobePath)
-    } catch (e) {
-      console.warn("Could not set ffprobe path inside task:", e)
-    }
-
     const tmpDir = os.tmpdir()
     const inputPath = path.join(tmpDir, `input-${Date.now()}.mp4`)
     const outputPath = path.join(tmpDir, `frame-${Date.now()}.jpg`)
 
-    // Download video
     const res = await fetch(payload.videoUrl)
     if (!res.ok) {
       throw new Error(
@@ -147,30 +108,31 @@ export const extractFrameTask = task({
     const buffer = Buffer.from(await res.arrayBuffer())
     fs.writeFileSync(inputPath, buffer)
 
-    // Resolve seek time
     let seekTime = 0
+
     if (payload.timestamp?.endsWith("%")) {
+      // ✅ Use ffmpeg stderr parsing — no ffprobe binary needed at all
       const percent = parseFloat(payload.timestamp) / 100
-      const duration = await getVideoDuration(inputPath)
+      const duration = await getVideoDurationFfmpegOnly(inputPath)
       seekTime = duration * percent
     } else {
       seekTime = parseFloat(payload.timestamp) || 0
     }
 
-    // Extract frame
     await new Promise<void>((resolve, reject) => {
       ffmpeg(inputPath)
         .seekInput(seekTime)
         .frames(1)
         .output(outputPath)
         .on("end", () => resolve())
-        .on("error", (err: any) => reject(new Error(`ffmpeg frame extraction failed: ${err.message}`)))
+        .on("error", (err: any) =>
+          reject(new Error(`ffmpeg frame extraction failed: ${err.message}`))
+        )
         .run()
     })
 
     const outputBuffer = fs.readFileSync(outputPath)
 
-    // Cleanup temp files
     try { fs.unlinkSync(inputPath) } catch { }
     try { fs.unlinkSync(outputPath) } catch { }
 

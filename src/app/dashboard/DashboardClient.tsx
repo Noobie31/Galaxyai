@@ -81,15 +81,31 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "Untitled" }),
       })
-      if (res.ok) router.push(`/workflow/${(await res.json()).id}`)
-    } finally { setIsCreating(false) }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        alert(`Failed to create workflow: ${err.error || res.status}`)
+        return
+      }
+      router.push(`/workflow/${(await res.json()).id}`)
+    } catch (e: any) {
+      alert(`Network error: ${e.message}. Check your environment variables in Vercel.`)
+    } finally {
+      setIsCreating(false)
+    }
   }
 
   const loadSampleWorkflow = async () => {
     try {
       const res = await fetch("/api/workflows/sample", { method: "POST" })
-      if (res.ok) router.push(`/workflow/${(await res.json()).id}`)
-    } catch (e) { console.error(e) }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        alert(`Failed to load sample: ${err.error || res.status}`)
+        return
+      }
+      router.push(`/workflow/${(await res.json()).id}`)
+    } catch (e: any) {
+      alert(`Network error: ${e.message}`)
+    }
   }
 
   const deleteWorkflow = async (id: string) => {

@@ -38,6 +38,24 @@ function topologicalSort(nodes: any[], edges: any[]): string[][] {
     return levels
 }
 
+// ✅ Unwrap output objects so downstream nodes always get a plain value
+// cropImageTask returns { output: url }, extractFrameTask returns { output: url }
+// llmNode might return { output: text } or { text: "..." }
+function unwrapOutput(raw: any): any {
+    if (raw === null || raw === undefined) return raw
+    if (typeof raw === "string") return raw
+    if (typeof raw === "number" || typeof raw === "boolean") return raw
+    if (typeof raw === "object") {
+        // Most common shape from our tasks: { output: "https://..." }
+        if (typeof raw.output === "string") return raw.output
+        // LLM might return { text: "..." }
+        if (typeof raw.text === "string") return raw.text
+        // Some tasks return { url: "..." }
+        if (typeof raw.url === "string") return raw.url
+    }
+    return raw
+}
+
 // Get output value from a node (passthrough nodes read directly from data)
 function getNodeOutput(nodeId: string, nodes: any[]): any {
     const node = nodes.find((n) => n.id === nodeId)
@@ -46,8 +64,9 @@ function getNodeOutput(nodeId: string, nodes: any[]): any {
     if (node?.type === "imageUploadNode") return node.data?.imageUrl || ""
     if (node?.type === "videoUploadNode") return node.data?.videoUrl || ""
 
-    // For executable nodes, get from execution store
-    return useExecutionStore.getState().nodeStates[nodeId]?.output
+    // For executable nodes, get from execution store and unwrap
+    const raw = useExecutionStore.getState().nodeStates[nodeId]?.output
+    return unwrapOutput(raw)
 }
 
 // Resolve all inputs for a node from connected edges + node data defaults
@@ -136,10 +155,8 @@ async function pollRun(
 
             // PENDING — keep polling
         } catch (err: any) {
-            // Only re-throw if it's a task failure error or we're near timeout
             if (err.message && err.message !== "Failed to fetch") throw err
             if (Date.now() - startTime > timeoutMs - 5000) throw err
-            // Network error — retry silently
         }
     }
 
@@ -196,6 +213,7 @@ async function executeNode(
             Date.now() - (useExecutionStore.getState().nodeStates[nodeId]?.startTime || Date.now())
         setNodeDuration(nodeId, duration)
         setNodeStatus(nodeId, "success")
+        // ✅ Store raw output as-is (node component does its own unwrapping for display)
         setNodeOutput(nodeId, output)
 
         return output
@@ -256,7 +274,6 @@ export async function runWorkflow(
     const startTime = Date.now()
     const nodeResults: any[] = []
     let overallStatus = "success"
-    // Track which nodes have failed so downstream can be skipped
     const failedNodes = new Set<string>()
 
     try {
@@ -268,7 +285,6 @@ export async function runWorkflow(
                     const node = nodes.find((n) => n.id === nodeId)
                     if (!node) return
 
-                    // ✅ Skip node if any dependency failed
                     if (hasDependencyFailed(nodeId, edges, failedNodes)) {
                         failedNodes.add(nodeId)
                         useExecutionStore.getState().setNodeStatus(nodeId, "failed")
@@ -321,7 +337,6 @@ export async function runWorkflow(
 }
 
 // Run a single node only
-// ✅ Fixed: does NOT reset all node states - preserves other nodes' results
 export async function runSingleNode(
     workflowId: string,
     nodeId: string,
@@ -378,8 +393,6 @@ export async function runSelectedNodes(
     edges: any[]
 ) {
     const selectedNodes = nodes.filter((n) => selectedNodeIds.includes(n.id))
-    // Include edges where BOTH source and target are in selected set
-    // This ensures proper dependency resolution within the selection
     const selectedEdges = edges.filter(
         (e) => selectedNodeIds.includes(e.source) && selectedNodeIds.includes(e.target)
     )

@@ -13,6 +13,13 @@ export default function CropImageNode({ id, data }: NodeProps) {
     const error = nodeStates[id]?.error
     const connectedHandles = (data.connectedHandles as string[]) || []
 
+    // ✅ Task returns { output: url } — extract URL correctly
+    // Handle all possible shapes: string, { output }, { url }, { imageUrl }
+    const imageUrl: string | null =
+        typeof output === "string"
+            ? output
+            : output?.output ?? output?.url ?? output?.imageUrl ?? null
+
     const handleRunSingle = async () => {
         const { runSingleNode } = await import("@/lib/execution-engine")
         const { workflowId, nodes, edges } = useWorkflowStore.getState()
@@ -101,6 +108,7 @@ export default function CropImageNode({ id, data }: NodeProps) {
 
             {/* Body */}
             <div className="p-3 space-y-2">
+                {/* image_url input row */}
                 <div className="text-xs text-white/30 flex items-center gap-1">
                     <div className="w-2 h-2 rounded-full bg-green-500/60" />
                     image_url
@@ -109,6 +117,7 @@ export default function CropImageNode({ id, data }: NodeProps) {
                     )}
                 </div>
 
+                {/* Numeric input fields */}
                 {fields.map((f) => (
                     <div key={f.key} className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full bg-blue-500/60 flex-shrink-0" />
@@ -129,6 +138,7 @@ export default function CropImageNode({ id, data }: NodeProps) {
                     </div>
                 ))}
 
+                {/* Running state */}
                 {status === "running" && (
                     <div className="flex items-center gap-2 bg-yellow-500/10 rounded-lg px-3 py-2">
                         <div className="w-3 h-3 border-2 border-yellow-500/40 border-t-yellow-500 rounded-full animate-spin" />
@@ -136,15 +146,38 @@ export default function CropImageNode({ id, data }: NodeProps) {
                     </div>
                 )}
 
-                {output && status === "success" && (
-                    <img
-                        src={typeof output === "string" ? output : output.url}
-                        alt="Cropped"
-                        className="w-full h-24 object-cover rounded-lg"
-                    />
+                {/* ✅ Success: show cropped image preview + link */}
+                {status === "success" && imageUrl && (
+                    <div className="space-y-1">
+                        <img
+                            src={imageUrl}
+                            alt="Cropped result"
+                            className="w-full h-24 object-cover rounded-lg border border-white/10"
+                            onError={(e) => {
+                                // Hide broken image gracefully
+                                (e.target as HTMLImageElement).style.display = "none"
+                            }}
+                        />
+                        <a
+                            href={imageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-white/30 hover:text-white/60 truncate block text-center"
+                        >
+                            View full image ↗
+                        </a>
+                    </div>
                 )}
 
-                {error && status === "failed" && (
+                {/* Success but no image URL (shouldn't happen, but safe fallback) */}
+                {status === "success" && !imageUrl && (
+                    <div className="bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
+                        <p className="text-xs text-green-400">✓ Crop complete</p>
+                    </div>
+                )}
+
+                {/* Error state */}
+                {status === "failed" && error && (
                     <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
                         <p className="text-xs text-red-400">{error}</p>
                     </div>
