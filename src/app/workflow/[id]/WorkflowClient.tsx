@@ -6,6 +6,7 @@ import LeftSidebar from "@/components/sidebar/LeftSidebar"
 import RightSidebar from "@/components/sidebar/RightSidebar"
 import WorkflowCanvas from "@/components/canvas/WorkflowCanvas"
 import { ReactFlowProvider } from "@xyflow/react"
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
 
 interface Props {
   workflowId: string
@@ -21,6 +22,9 @@ function WorkflowClientInner({ workflowId, workflowName, initialNodes, initialEd
   const [showHistory, setShowHistory] = useState(false)
   const autoSaveTimer = useRef<NodeJS.Timeout | null>(null)
   const initialized = useRef(false)
+
+  // ✅ Register all keyboard shortcuts
+  useKeyboardShortcuts()
 
   // Initialize store once on mount
   useEffect(() => {

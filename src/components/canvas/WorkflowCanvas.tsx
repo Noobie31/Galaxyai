@@ -1,9 +1,10 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useRef, useState, useEffect } from "react"
 import {
   ReactFlow, Background, BackgroundVariant, MiniMap,
   Connection, addEdge, applyNodeChanges, applyEdgeChanges,
+  useReactFlow,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { useWorkflowStore } from "@/store/workflowStore"
@@ -19,7 +20,7 @@ import CropImageNode from "@/components/nodes/CropImageNode"
 import ExtractFrameNode from "@/components/nodes/ExtractFrameNode"
 import CanvasToolbar from "./CanvasToolbar"
 import { v4 as uuidv4 } from "uuid"
-import { Play, Zap } from "lucide-react"
+import { Play, Zap, AlertTriangle } from "lucide-react"
 
 const nodeTypes = {
   textNode: TextNode,
@@ -34,7 +35,7 @@ const defaultData: Record<string, any> = {
   textNode: { label: "Text", text: "", status: "idle" },
   imageUploadNode: { label: "Upload Image", status: "idle" },
   videoUploadNode: { label: "Upload Video", status: "idle" },
-  llmNode: { label: "Run Any LLM", model: "gemini-2.0-flash", status: "idle", connectedHandles: [] },
+  llmNode: { label: "Run Any LLM", model: "gemini-2.5-flash", status: "idle", connectedHandles: [] },
   cropImageNode: { label: "Crop Image", xPercent: 0, yPercent: 0, widthPercent: 100, heightPercent: 100, connectedHandles: [], status: "idle" },
   extractFrameNode: { label: "Extract Frame", timestamp: "0", connectedHandles: [], status: "idle" },
 }
@@ -58,17 +59,55 @@ interface Props {
   onHistoryToggle: () => void
 }
 
+// Toast component for connection errors
+function ConnectionToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDismiss, 3000)
+    return () => clearTimeout(t)
+  }, [onDismiss])
+
+  return (
+    <div style={{
+      position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)",
+      background: "#1a1a1a", border: "1px solid rgba(248,113,113,0.4)",
+      borderRadius: 10, padding: "10px 16px", zIndex: 9999,
+      display: "flex", alignItems: "center", gap: 8,
+      boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
+      animation: "slideUp 0.2s ease-out",
+    }}>
+      <AlertTriangle size={14} style={{ color: "#f87171", flexShrink: 0 }} />
+      <span style={{ fontSize: 13, color: "rgba(255,255,255,0.8)" }}>{message}</span>
+    </div>
+  )
+}
+
 export default function WorkflowCanvas({ onHistoryToggle }: Props) {
   const { nodes, edges, setNodes, setEdges, updateNode } = useWorkflowStore()
   const { pushHistory } = useHistoryStore()
   const { activeTool } = useCanvasToolStore()
   const { nodeStates } = useExecutionStore()
+  const { fitView, setNodes: rfSetNodes } = useReactFlow()
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; selectedIds: string[] } | null>(null)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
 
-  // Safely get arrays - guard against undefined during hydration
   const safeNodes = nodes ?? []
   const safeEdges = edges ?? []
+
+  // ── Handle custom keyboard shortcut events from useKeyboardShortcuts ──
+  useEffect(() => {
+    const handleFitView = () => fitView({ duration: 500, padding: 0.1 })
+    const handleSelectAll = () => {
+      setNodes(safeNodes.map((n) => ({ ...n, selected: true })))
+    }
+
+    window.addEventListener("workflow:fitview", handleFitView)
+    window.addEventListener("workflow:selectall", handleSelectAll)
+    return () => {
+      window.removeEventListener("workflow:fitview", handleFitView)
+      window.removeEventListener("workflow:selectall", handleSelectAll)
+    }
+  }, [fitView, safeNodes, setNodes])
 
   // Inject execution status className onto each node for glow effect
   const nodesWithStatus = safeNodes.map((node) => {
@@ -97,9 +136,18 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      if (!validateConnection(connection, safeNodes)) return
+      // ── Type-safe connection validation with user feedback ──
+      if (!validateConnection(connection, safeNodes)) {
+        // Find source and target node types for a helpful message
+        const sourceNode = safeNodes.find((n) => n.id === connection.source)
+        const targetHandle = connection.targetHandle || "input"
+        setConnectionError(
+          `Cannot connect ${sourceNode?.type?.replace("Node", "") || "this node"} output to "${targetHandle}" — incompatible types`
+        )
+        return
+      }
       if (hasCycle(safeNodes, safeEdges, { source: connection.source!, target: connection.target! })) {
-        console.warn("Cycle detected - connection rejected")
+        setConnectionError("Circular connections are not allowed — this would create a loop")
         return
       }
       pushHistory({ nodes: safeNodes, edges: safeEdges })
@@ -161,15 +209,14 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
   )
 
   const onNodesDelete = useCallback(
-    (deletedNodes: any[]) => {
+    (_deletedNodes: any[]) => {
       pushHistory({ nodes: safeNodes, edges: safeEdges })
     },
     [safeNodes, safeEdges, pushHistory]
   )
 
   const onNodeDragStop = useCallback(
-    (_: any, __: any, draggedNodes: any[]) => {
-      // Push history after drag ends so positions are undo-able
+    (_: any, __: any, _draggedNodes: any[]) => {
       pushHistory({ nodes: safeNodes, edges: safeEdges })
     },
     [safeNodes, safeEdges, pushHistory]
@@ -178,11 +225,9 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
   const onEdgeClick = useCallback(
     (_: React.MouseEvent, edge: any) => {
       if (activeTool !== "cut") return
-      // Cut mode: clicking an edge deletes it
       pushHistory({ nodes: safeNodes, edges: safeEdges })
       const remaining = safeEdges.filter((e) => e.id !== edge.id)
       setEdges(remaining)
-      // Update connectedHandles on the target node
       if (edge.target && edge.targetHandle) {
         const targetNode = safeNodes.find((n) => n.id === edge.target)
         if (targetNode) {
@@ -229,7 +274,12 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
   const isCutMode = activeTool === "cut"
 
   return (
-    <div ref={reactFlowWrapper} className={isCutMode ? "cut-mode" : ""} style={{ width: "100%", height: "100%", cursor: isCutMode ? "crosshair" : undefined }} onClick={() => setContextMenu(null)}>
+    <div
+      ref={reactFlowWrapper}
+      className={isCutMode ? "cut-mode" : ""}
+      style={{ width: "100%", height: "100%", cursor: isCutMode ? "crosshair" : undefined }}
+      onClick={() => setContextMenu(null)}
+    >
       <ReactFlow
         nodes={nodesWithStatus}
         edges={safeEdges}
@@ -281,12 +331,20 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
           pointerEvents: "none", zIndex: 5,
         }}>
           <p style={{ fontSize: 16, fontWeight: 500, color: "rgba(255,255,255,0.25)", margin: "0 0 6px" }}>
-            Add a node
+            Add a node to get started
           </p>
-          <p style={{ fontSize: 13, color: "rgba(255,255,255,0.18)", margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
-            Click + or drag from the left sidebar
+          <p style={{ fontSize: 13, color: "rgba(255,255,255,0.18)", margin: 0 }}>
+            Click + in the toolbar, drag from the sidebar, or use keyboard shortcuts (T, I, L, C, E)
           </p>
         </div>
+      )}
+
+      {/* Connection error toast */}
+      {connectionError && (
+        <ConnectionToast
+          message={connectionError}
+          onDismiss={() => setConnectionError(null)}
+        />
       )}
 
       {/* Context menu */}
@@ -340,6 +398,10 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
         @keyframes nodeFailFlash {
           0% { box-shadow: 0 0 12px 4px rgba(248, 113, 113, 0.7); }
           100% { box-shadow: none; }
+        }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+          to { opacity: 1; transform: translateX(-50%) translateY(0); }
         }
         .react-flow__node.node-running {
           animation: nodeGlow 1.2s ease-in-out infinite;

@@ -1,13 +1,57 @@
 import { task } from "@trigger.dev/sdk/v3"
 import ffmpeg from "fluent-ffmpeg"
 import ffmpegStatic from "ffmpeg-static"
-import ffprobeStatic from "ffprobe-static"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
 
+// Set ffmpeg path from ffmpeg-static
 ffmpeg.setFfmpegPath(ffmpegStatic as string)
-ffmpeg.setFfprobePath(ffprobeStatic.path)
+
+// Resolve ffprobe path without importing ffprobe-static directly
+// (direct import causes esbuild resolution errors in Trigger.dev builds)
+function getFfprobePath(): string {
+  // Try require.resolve to find the package path at runtime
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ffprobeStatic = require("ffprobe-static")
+    if (ffprobeStatic?.path && fs.existsSync(ffprobeStatic.path)) {
+      return ffprobeStatic.path
+    }
+  } catch {
+    // ignore
+  }
+
+  // Fallback: resolve manually from node_modules
+  const platform = process.platform // "linux", "darwin", "win32"
+  const arch = process.arch         // "x64", "ia32", "arm64"
+  const ext = platform === "win32" ? ".exe" : ""
+
+  const candidates = [
+    path.join(process.cwd(), "node_modules", "ffprobe-static", "bin", platform, arch, `ffprobe${ext}`),
+    path.join(__dirname, "..", "..", "node_modules", "ffprobe-static", "bin", platform, arch, `ffprobe${ext}`),
+    "/usr/bin/ffprobe",
+    "/usr/local/bin/ffprobe",
+  ]
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  throw new Error(
+    `ffprobe binary not found for platform=${platform} arch=${arch}. Checked: ${candidates.join(", ")}`
+  )
+}
+
+// Set ffprobe path at module load time
+try {
+  const ffprobePath = getFfprobePath()
+  ffmpeg.setFfprobePath(ffprobePath)
+} catch (e) {
+  console.warn("Warning: Could not set ffprobe path:", e)
+}
 
 async function uploadToTransloadit(
   fileBuffer: Buffer,
@@ -54,11 +98,11 @@ function getImageDimensions(
 ): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(inputPath, (err: any, metadata: any) => {
-      if (err) return reject(err)
+      if (err) return reject(new Error(`ffprobe failed: ${err.message}`))
       const stream = metadata.streams?.find(
         (s: any) => s.width && s.height
       )
-      if (!stream) return reject(new Error("No video/image stream found"))
+      if (!stream) return reject(new Error("No video/image stream found in file"))
       resolve({ width: stream.width, height: stream.height })
     })
   })
@@ -80,10 +124,19 @@ export const cropImageTask = task({
       )
     }
 
+    // Re-set ffprobe path inside the task run (Trigger.dev workers may re-initialize)
+    try {
+      const ffprobePath = getFfprobePath()
+      ffmpeg.setFfprobePath(ffprobePath)
+    } catch (e) {
+      console.warn("Could not set ffprobe path inside task:", e)
+    }
+
     const tmpDir = os.tmpdir()
     const inputPath = path.join(tmpDir, `input-${Date.now()}.jpg`)
     const outputPath = path.join(tmpDir, `output-${Date.now()}.jpg`)
 
+    // Download image
     const res = await fetch(payload.imageUrl)
     if (!res.ok)
       throw new Error(`Failed to fetch image: ${res.status} ${res.statusText}`)
@@ -91,6 +144,7 @@ export const cropImageTask = task({
     const buffer = Buffer.from(await res.arrayBuffer())
     fs.writeFileSync(inputPath, buffer)
 
+    // Get dimensions via ffprobe
     const { width, height } = await getImageDimensions(inputPath)
 
     const x = Math.floor((payload.xPercent / 100) * width)
@@ -98,18 +152,20 @@ export const cropImageTask = task({
     const w = Math.max(1, Math.floor((payload.widthPercent / 100) * width))
     const h = Math.max(1, Math.floor((payload.heightPercent / 100) * height))
 
+    // Crop using ffmpeg
     await new Promise<void>((resolve, reject) => {
       ffmpeg(inputPath)
         .videoFilter(`crop=${w}:${h}:${x}:${y}`)
         .frames(1)
         .output(outputPath)
         .on("end", () => resolve())
-        .on("error", reject)
+        .on("error", (err: any) => reject(new Error(`ffmpeg crop failed: ${err.message}`)))
         .run()
     })
 
     const outputBuffer = fs.readFileSync(outputPath)
 
+    // Cleanup temp files
     try { fs.unlinkSync(inputPath) } catch { }
     try { fs.unlinkSync(outputPath) } catch { }
 
