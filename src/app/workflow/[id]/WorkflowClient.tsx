@@ -23,10 +23,8 @@ function WorkflowClientInner({ workflowId, workflowName, initialNodes, initialEd
   const autoSaveTimer = useRef<NodeJS.Timeout | null>(null)
   const initialized = useRef(false)
 
-  // ✅ Register all keyboard shortcuts
   useKeyboardShortcuts()
 
-  // Initialize store once on mount
   useEffect(() => {
     if (initialized.current) return
     initialized.current = true
@@ -57,7 +55,7 @@ function WorkflowClientInner({ workflowId, workflowName, initialNodes, initialEd
     }
   }, [setIsSaving, setLastSaved])
 
-  // Ctrl+S save
+  // Ctrl+S
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
@@ -69,7 +67,7 @@ function WorkflowClientInner({ workflowId, workflowName, initialNodes, initialEd
     return () => window.removeEventListener("keydown", handler)
   }, [saveWorkflow])
 
-  // Auto-save when nodes/edges/name change
+  // Auto-save on change
   useEffect(() => {
     let prevNodes = useWorkflowStore.getState().nodes
     let prevEdges = useWorkflowStore.getState().edges
@@ -80,12 +78,10 @@ function WorkflowClientInner({ workflowId, workflowName, initialNodes, initialEd
         state.nodes !== prevNodes ||
         state.edges !== prevEdges ||
         state.workflowName !== prevName
-
       if (!changed) return
       prevNodes = state.nodes
       prevEdges = state.edges
       prevName = state.workflowName
-
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
       autoSaveTimer.current = setTimeout(saveWorkflow, 2000)
     })
@@ -97,16 +93,20 @@ function WorkflowClientInner({ workflowId, workflowName, initialNodes, initialEd
   }, [saveWorkflow])
 
   return (
+    // Full 100vh — no top bar, canvas IS the whole screen
     <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#0a0a0a", overflow: "hidden" }}>
-      {/* Left sidebar */}
+      {/* Left sidebar — required by assignment */}
       <LeftSidebar />
 
-      {/* Canvas */}
+      {/* Canvas fills the rest — toolbar panels float as overlays inside */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-        <WorkflowCanvas onHistoryToggle={() => setShowHistory((v) => !v)} />
+        <WorkflowCanvas
+          onHistoryToggle={() => setShowHistory((v) => !v)}
+          showHistory={showHistory}
+        />
       </div>
 
-      {/* Right sidebar - run history */}
+      {/* Right sidebar — history panel, toggled via canvas top-right button */}
       {showHistory && (
         <RightSidebar
           workflowId={workflowId}

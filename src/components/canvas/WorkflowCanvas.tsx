@@ -57,9 +57,9 @@ function getDownstreamNodes(startIds: string[], edges: any[]): string[] {
 
 interface Props {
   onHistoryToggle: () => void
+  showHistory: boolean
 }
 
-// Toast component for connection errors
 function ConnectionToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   useEffect(() => {
     const t = setTimeout(onDismiss, 3000)
@@ -81,12 +81,12 @@ function ConnectionToast({ message, onDismiss }: { message: string; onDismiss: (
   )
 }
 
-export default function WorkflowCanvas({ onHistoryToggle }: Props) {
+export default function WorkflowCanvas({ onHistoryToggle, showHistory }: Props) {
   const { nodes, edges, setNodes, setEdges, updateNode } = useWorkflowStore()
   const { pushHistory } = useHistoryStore()
   const { activeTool } = useCanvasToolStore()
   const { nodeStates } = useExecutionStore()
-  const { fitView, setNodes: rfSetNodes } = useReactFlow()
+  const { fitView } = useReactFlow()
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; selectedIds: string[] } | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
@@ -94,13 +94,9 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
   const safeNodes = nodes ?? []
   const safeEdges = edges ?? []
 
-  // ── Handle custom keyboard shortcut events from useKeyboardShortcuts ──
   useEffect(() => {
     const handleFitView = () => fitView({ duration: 500, padding: 0.1 })
-    const handleSelectAll = () => {
-      setNodes(safeNodes.map((n) => ({ ...n, selected: true })))
-    }
-
+    const handleSelectAll = () => setNodes(safeNodes.map((n) => ({ ...n, selected: true })))
     window.addEventListener("workflow:fitview", handleFitView)
     window.addEventListener("workflow:selectall", handleSelectAll)
     return () => {
@@ -109,17 +105,13 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
     }
   }, [fitView, safeNodes, setNodes])
 
-  // Inject execution status className onto each node for glow effect
   const nodesWithStatus = safeNodes.map((node) => {
     const status = nodeStates[node.id]?.status
     return {
       ...node,
-      className: status === "running"
-        ? "node-running"
-        : status === "success"
-          ? "node-success"
-          : status === "failed"
-            ? "node-failed"
+      className: status === "running" ? "node-running"
+        : status === "success" ? "node-success"
+          : status === "failed" ? "node-failed"
             : "",
     }
   })
@@ -136,9 +128,7 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      // ── Type-safe connection validation with user feedback ──
       if (!validateConnection(connection, safeNodes)) {
-        // Find source and target node types for a helpful message
         const sourceNode = safeNodes.find((n) => n.id === connection.source)
         const targetHandle = connection.targetHandle || "input"
         setConnectionError(
@@ -319,13 +309,14 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
           nodeColor="#2a2a2a"
           maskColor="rgba(0,0,0,0.6)"
         />
-        <CanvasToolbar onHistoryToggle={onHistoryToggle} />
+        {/* Toolbar panels float inside the canvas */}
+        <CanvasToolbar onHistoryToggle={onHistoryToggle} showHistory={showHistory} />
       </ReactFlow>
 
       {/* Empty state */}
       {safeNodes.length === 0 && (
         <div style={{
-          position: "absolute", inset: 0, top: 48,
+          position: "absolute", inset: 0,
           display: "flex", flexDirection: "column",
           alignItems: "center", justifyContent: "center",
           pointerEvents: "none", zIndex: 5,
@@ -341,13 +332,10 @@ export default function WorkflowCanvas({ onHistoryToggle }: Props) {
 
       {/* Connection error toast */}
       {connectionError && (
-        <ConnectionToast
-          message={connectionError}
-          onDismiss={() => setConnectionError(null)}
-        />
+        <ConnectionToast message={connectionError} onDismiss={() => setConnectionError(null)} />
       )}
 
-      {/* Context menu */}
+      {/* Right-click context menu */}
       {contextMenu && (
         <div
           style={{

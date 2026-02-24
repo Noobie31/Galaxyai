@@ -20,7 +20,7 @@ export default function SignUpPage() {
                 <SignUp />
             </div>
 
-            {/* Right: decorative image panel */}
+            {/* Right: full-height landscape image panel */}
             <div style={{
                 width: "45%",
                 position: "relative",
@@ -30,21 +30,22 @@ export default function SignUpPage() {
             }}>
                 <div style={{
                     position: "absolute", inset: 0,
-                    backgroundImage: "url(https://images.unsplash.com/photo-1620641788421-7a1c342ea42e?w=800&q=80)",
+                    backgroundImage: "url(https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=1200&q=85)",
                     backgroundSize: "cover",
                     backgroundPosition: "center",
-                    filter: "brightness(0.6)",
+                    filter: "brightness(0.72)",
                 }} />
+                {/* Subtle dark overlay */}
                 <div style={{
                     position: "absolute", inset: 0,
-                    background: "linear-gradient(135deg, rgba(99,102,241,0.25) 0%, rgba(168,85,247,0.35) 100%)",
+                    background: "linear-gradient(180deg, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.5) 100%)",
                 }} />
                 <div style={{
-                    position: "absolute", bottom: 28, left: 28, right: 28,
+                    position: "absolute", bottom: 32, left: 32, right: 32,
                 }}>
                     <p style={{
-                        color: "rgba(255,255,255,0.65)",
-                        fontSize: 14, lineHeight: 1.65, margin: 0,
+                        color: "rgba(255,255,255,0.6)",
+                        fontSize: 14, lineHeight: 1.7, margin: 0,
                     }}>
                         Join thousands of creators building AI workflows with NextFlow.
                     </p>

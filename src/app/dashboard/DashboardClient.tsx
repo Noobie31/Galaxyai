@@ -6,7 +6,7 @@ import { useUser, useClerk } from "@clerk/nextjs"
 import {
   Plus, Search, ChevronDown,
   Home, ImageIcon, Video, Pen, Type, Folder,
-  Clock, ExternalLink, Pencil, Copy, Trash2, LogOut, User,
+  Clock, ExternalLink, Pencil, Trash2, LogOut, User,
 } from "lucide-react"
 
 interface Workflow {
@@ -116,18 +116,6 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
     setContextMenu(null)
   }
 
-  const duplicateWorkflow = async (wf: Workflow) => {
-    try {
-      const res = await fetch("/api/workflows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: `${wf.name} (copy)`, nodes: wf.nodes, edges: wf.edges }),
-      })
-      if (res.ok) fetchWorkflows()
-    } catch (e) { console.error(e) }
-    setContextMenu(null)
-  }
-
   const renameWorkflow = async (id: string, name: string) => {
     try {
       await fetch(`/api/workflows/${id}`, {
@@ -215,7 +203,6 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
 
         {/* Right */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 120, justifyContent: "flex-end" }}>
-          {/* Search */}
           <NavBtn><Search size={15} /></NavBtn>
 
           <button style={{
@@ -250,7 +237,6 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
                 borderRadius: 12, padding: 6, minWidth: 220,
                 boxShadow: "0 8px 32px rgba(0,0,0,0.5)", zIndex: 200,
               }}>
-                {/* User info */}
                 <div style={{ padding: "8px 10px 10px", borderBottom: `1px solid rgba(255,255,255,0.07)`, marginBottom: 4 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <div style={{
@@ -268,7 +254,6 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
                   </div>
                 </div>
 
-                {/* Menu items */}
                 {[
                   { icon: <User size={13} />, label: "Profile", onClick: () => setUserMenuOpen(false) },
                 ].map((item) => (
@@ -288,7 +273,6 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
 
                 <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "3px 0" }} />
 
-                {/* Sign out */}
                 <button
                   onClick={() => signOut({ redirectUrl: "/sign-in" })}
                   style={{
@@ -450,7 +434,7 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
         </div>
       </div>
 
-      {/* Context Menu */}
+      {/* Context Menu — Duplicate removed */}
       {contextMenu && (
         <div ref={contextRef} onClick={(e) => e.stopPropagation()} style={{
           position: "fixed", top: contextMenu.y, left: contextMenu.x,
@@ -462,7 +446,6 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
           {[
             { icon: <ExternalLink size={13} />, label: "Open", onClick: () => { router.push(`/workflow/${contextMenu.workflow.id}`); setContextMenu(null) }, danger: false },
             { icon: <Pencil size={13} />, label: "Rename", onClick: () => { setRenamingId(contextMenu.workflow.id); setRenameValue(contextMenu.workflow.name); setContextMenu(null) }, danger: false },
-            { icon: <Copy size={13} />, label: "Duplicate", onClick: () => duplicateWorkflow(contextMenu.workflow), danger: false },
             null,
             { icon: <Trash2 size={13} />, label: "Delete", onClick: () => deleteWorkflow(contextMenu.workflow.id), danger: true },
           ].map((item, i) =>

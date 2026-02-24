@@ -1,19 +1,21 @@
 "use client"
 
 import { useCallback, useState, useRef, useEffect } from "react"
-import { useReactFlow, useViewport, Panel } from "@xyflow/react"
+import { useReactFlow, Panel } from "@xyflow/react"
 import { useWorkflowStore } from "@/store/workflowStore"
 import { useHistoryStore } from "@/store/historyStore"
 import { useCanvasToolStore } from "@/store/canvasToolStore"
 import { useExecutionStore } from "@/store/executionStore"
 import { useRouter } from "next/navigation"
 import {
-  MousePointer2, Hand, Scissors, Sparkles,
+  MousePointer2, Hand, Scissors, Sparkles, Link2,
   Plus, Type, ImageIcon, Video, Brain, Crop, Film,
-  Undo2, Redo2, ArrowLeft, Share2, Check, Play, History, Download, Upload,
+  Undo2, Redo2, Play, History, Download, Upload,
+  ArrowLeft, Share2, Check, ChevronDown, Keyboard,
 } from "lucide-react"
+import KeyboardShortcutsModal from "./KeyboardShortcutsModal"
 
-// ── Tooltip — appears ABOVE toolbar buttons ──
+// ── Tooltip — appears ABOVE buttons ──
 function Tip({ label, shortcut, children }: { label: string; shortcut?: string; children: React.ReactNode }) {
   const [show, setShow] = useState(false)
   return (
@@ -188,7 +190,23 @@ const NodesIcon = () => (
   </svg>
 )
 
-export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: () => void }) {
+// Reusable floating pill button style
+const pillStyle: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 5,
+  background: "rgba(0,0,0,0.6)", backdropFilter: "blur(12px)",
+  border: "1px solid rgba(255,255,255,0.09)", borderRadius: 8,
+  padding: "0 10px", height: 32,
+  color: "rgba(255,255,255,0.55)", fontSize: 13, fontWeight: 500,
+  cursor: "pointer",
+}
+
+export default function CanvasToolbar({
+  onHistoryToggle,
+  showHistory,
+}: {
+  onHistoryToggle?: () => void
+  showHistory?: boolean
+}) {
   const { addNodes, fitView } = useReactFlow()
   const { activeTool, setActiveTool } = useCanvasToolStore()
   const { undo, redo, past, future } = useHistoryStore()
@@ -201,9 +219,20 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
   const [editingName, setEditingName] = useState(false)
   const [shareOk, setShareOk] = useState(false)
   const [exportOk, setExportOk] = useState(false)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
+  const [logoMenuOpen, setLogoMenuOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const logoMenuRef = useRef<HTMLDivElement>(null)
   const importRef = useRef<HTMLInputElement>(null)
+
+  // Close logo menu on outside click
+  useEffect(() => {
+    if (!logoMenuOpen) return
+    const h = (e: MouseEvent) => {
+      if (logoMenuRef.current && !logoMenuRef.current.contains(e.target as Node)) setLogoMenuOpen(false)
+    }
+    setTimeout(() => document.addEventListener("mousedown", h), 50)
+    return () => document.removeEventListener("mousedown", h)
+  }, [logoMenuOpen])
 
   const handleExport = () => {
     const { nodes, edges, workflowName } = useWorkflowStore.getState()
@@ -217,6 +246,7 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
     URL.revokeObjectURL(url)
     setExportOk(true)
     setTimeout(() => setExportOk(false), 2000)
+    setLogoMenuOpen(false)
   }
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -232,23 +262,19 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
         useWorkflowStore.getState().setEdges(data.edges)
         fitView({ duration: 500, padding: 0.1 })
       } catch {
-        alert("Invalid workflow file. Please export a valid workflow JSON.")
+        alert("Invalid workflow file.")
       }
     }
     reader.readAsText(file)
-    // Reset input so same file can be re-imported
     e.target.value = ""
   }
 
-  // Close menu on outside click
-  useEffect(() => {
-    if (!menuOpen) return
-    const h = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
-    }
-    setTimeout(() => document.addEventListener("mousedown", h), 50)
-    return () => document.removeEventListener("mousedown", h)
-  }, [menuOpen])
+  const handleShare = async () => {
+    await navigator.clipboard.writeText(window.location.href).catch(() => { })
+    setShareOk(true)
+    setTimeout(() => setShareOk(false), 2000)
+    setLogoMenuOpen(false)
+  }
 
   const handleUndo = () => {
     const entry = undo()
@@ -271,7 +297,16 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
       id: `${type}-${Date.now()}`,
       type,
       position: { x: 200 + Math.random() * 300, y: 200 + Math.random() * 200 },
-      data: { ...({ textNode: { label: "Text", text: "", status: "idle" }, imageUploadNode: { label: "Upload Image", status: "idle" }, videoUploadNode: { label: "Upload Video", status: "idle" }, llmNode: { label: "Run Any LLM", model: "gemini-2.0-flash", status: "idle", connectedHandles: [] }, cropImageNode: { label: "Crop Image", xPercent: 0, yPercent: 0, widthPercent: 100, heightPercent: 100, connectedHandles: [], status: "idle" }, extractFrameNode: { label: "Extract Frame", timestamp: "0", connectedHandles: [], status: "idle" } }[type] || { label: type, status: "idle" }) },
+      data: {
+        ...({
+          textNode: { label: "Text", text: "", status: "idle" },
+          imageUploadNode: { label: "Upload Image", status: "idle" },
+          videoUploadNode: { label: "Upload Video", status: "idle" },
+          llmNode: { label: "Run Any LLM", model: "gemini-2.0-flash", status: "idle", connectedHandles: [] },
+          cropImageNode: { label: "Crop Image", xPercent: 0, yPercent: 0, widthPercent: 100, heightPercent: 100, connectedHandles: [], status: "idle" },
+          extractFrameNode: { label: "Extract Frame", timestamp: "0", connectedHandles: [], status: "idle" },
+        }[type] || { label: type, status: "idle" }),
+      },
     })
   }
 
@@ -281,12 +316,6 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
     fitView({ duration: 500, padding: 0.1 })
   }
 
-  const handleShare = async () => {
-    await navigator.clipboard.writeText(window.location.href).catch(() => { })
-    setShareOk(true)
-    setTimeout(() => setShareOk(false), 2000)
-  }
-
   const handleRunAll = async () => {
     const { workflowId } = useWorkflowStore.getState()
     if (!workflowId || isRunning) return
@@ -294,8 +323,8 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
     runWorkflow(workflowId, nodes, edges, "full")
   }
 
-  const ToolBtn = ({ children, isActive, onClick, disabled, title }: any) => (
-    <button onClick={onClick} disabled={disabled} title={title}
+  const ToolBtn = ({ children, isActive, onClick, disabled }: any) => (
+    <button onClick={onClick} disabled={disabled}
       style={{
         width: 34, height: 32,
         display: "flex", alignItems: "center", justifyContent: "center",
@@ -311,138 +340,137 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
     </button>
   )
 
-  const topBtnStyle: React.CSSProperties = {
-    display: "flex", alignItems: "center", gap: 5,
-    background: "rgba(0,0,0,0.55)", backdropFilter: "blur(10px)",
-    border: "1px solid rgba(255,255,255,0.09)", borderRadius: 8,
-    padding: "0 10px", height: 32,
-    color: "rgba(255,255,255,0.5)", fontSize: 13, fontWeight: 500, cursor: "pointer",
-  }
-
   const tools = [
-    { id: "select", icon: MousePointer2, label: "Select" },
-    { id: "pan", icon: Hand, label: "Pan" },
-    { id: "cut", icon: Scissors, label: "Cut Connections" },
+    { id: "select", icon: MousePointer2, label: "Select", shortcut: "V" },
+    { id: "pan", icon: Hand, label: "Pan", shortcut: "H" },
+    { id: "cut", icon: Scissors, label: "Cut Connections", shortcut: "X" },
     { id: "magic", icon: Sparkles, label: "Magic" },
+    { id: "connect", icon: Link2, label: "Connect" },
+  ]
+
+  const logoMenuItems = [
+    { icon: ArrowLeft, label: "Back to Dashboard", onClick: () => { router.push("/dashboard"); setLogoMenuOpen(false) } },
+    null,
+    { icon: Upload, label: "Import", onClick: () => { importRef.current?.click(); setLogoMenuOpen(false) } },
+    { icon: exportOk ? Check : Download, label: exportOk ? "Exported!" : "Export as JSON", onClick: handleExport, highlight: exportOk },
+    { icon: shareOk ? Check : Share2, label: shareOk ? "Copied!" : "Copy share link", onClick: handleShare, highlight: shareOk },
   ]
 
   return (
     <>
-      {/* ── TOP OVERLAY: workflow name left + controls right ── */}
+      {/* ── TOP LEFT: Logo dropdown + workflow name ── */}
       <Panel position="top-left" style={{ margin: "10px 0 0 10px", pointerEvents: "all" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Back to dashboard */}
-          <button
-            onClick={() => router.push("/dashboard")}
-            style={{ ...topBtnStyle, paddingLeft: 8, paddingRight: 8 }}
-            title="Back to Dashboard"
-          >
-            <ArrowLeft size={14} />
-          </button>
 
-          {/* Logo + workflow name */}
+          {/* Logo dropdown */}
+          <div ref={logoMenuRef} style={{ position: "relative" }}>
+            <button
+              onClick={() => setLogoMenuOpen((v) => !v)}
+              style={{
+                ...pillStyle,
+                paddingLeft: 6, paddingRight: 8, gap: 6,
+                background: logoMenuOpen ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.6)",
+              }}
+            >
+              {/* Logo mark */}
+              <div style={{
+                width: 22, height: 22, background: "white", borderRadius: 6,
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              }}>
+                <span style={{ color: "black", fontWeight: 900, fontSize: 11 }}>N</span>
+              </div>
+              <ChevronDown
+                size={12}
+                style={{
+                  color: "rgba(255,255,255,0.35)",
+                  transform: logoMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.15s",
+                }}
+              />
+            </button>
+
+            {/* Dropdown */}
+            {logoMenuOpen && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 8px)", left: 0,
+                background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: 12, padding: 6, minWidth: 210, zIndex: 9999,
+                boxShadow: "0 8px 32px rgba(0,0,0,0.7)",
+              }}>
+                {logoMenuItems.map((item, i) =>
+                  item === null ? (
+                    <div key={i} style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "4px 0" }} />
+                  ) : (
+                    <button
+                      key={item.label}
+                      onClick={item.onClick}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: 10,
+                        padding: "8px 10px", border: "none", borderRadius: 8,
+                        background: "none", cursor: "pointer", textAlign: "left",
+                        color: (item as any).highlight ? "#4ade80" : "rgba(255,255,255,0.65)",
+                        fontSize: 13,
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.color = (item as any).highlight ? "#4ade80" : "white" }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = (item as any).highlight ? "#4ade80" : "rgba(255,255,255,0.65)" }}
+                    >
+                      <item.icon size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
+                      {item.label}
+                    </button>
+                  )
+                )}
+              </div>
+            )}
+
+            <input ref={importRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={handleImport} />
+          </div>
+
+          {/* Breadcrumb separator */}
+          <span style={{ color: "rgba(255,255,255,0.15)", fontSize: 16 }}>›</span>
+
+          {/* Workflow name */}
           {editingName ? (
             <input autoFocus value={workflowName}
               onChange={(e) => setWorkflowName(e.target.value)}
               onBlur={() => setEditingName(false)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingName(false) }}
               style={{
+                ...pillStyle,
                 background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
-                borderRadius: 8, padding: "4px 10px", color: "white", fontSize: 13,
-                fontWeight: 500, outline: "none", width: 180,
-              }}
+                color: "white", fontSize: 13, fontWeight: 500, outline: "none", width: 180,
+                padding: "0 10px",
+              } as any}
             />
           ) : (
-            <button onClick={() => setEditingName(true)} style={{ ...topBtnStyle, gap: 8 }}>
-              <div style={{
-                width: 20, height: 20, background: "white", borderRadius: 5,
-                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-              }}>
-                <span style={{ color: "black", fontWeight: 900, fontSize: 10 }}>N</span>
-              </div>
-              <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>›</span>
-              <span style={{ color: "rgba(255,255,255,0.8)" }}>{workflowName || "Untitled"}</span>
-              {isSaving && <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.3)", display: "inline-block" }} />}
+            <button onClick={() => setEditingName(true)} style={{ ...pillStyle }}>
+              <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>
+                {workflowName || "Untitled"}
+              </span>
+              {isSaving && (
+                <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.3)", display: "inline-block", marginLeft: 2 }} />
+              )}
             </button>
           )}
         </div>
       </Panel>
 
+      {/* ── TOP RIGHT: Run All + History toggle ── */}
       <Panel position="top-right" style={{ margin: "10px 10px 0 0", pointerEvents: "all" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
 
-          {/* ── Dropdown: Share / Export / Import / Run History ── */}
-          <div ref={menuRef} style={{ position: "relative" }}>
-            <button
-              onClick={() => setMenuOpen(!menuOpen)}
-              style={{
-                ...topBtnStyle,
-                background: menuOpen ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.55)",
-                paddingLeft: 10, paddingRight: 8, gap: 4,
-              }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="2" y="3" width="20" height="14" rx="2" />
-                <path d="M8 21h8M12 17v4" />
-              </svg>
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ color: "rgba(255,255,255,0.3)" }}>
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-
-            {menuOpen && (
-              <div style={{
-                position: "absolute", top: "calc(100% + 8px)", right: 0,
-                background: "#141414", border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 12, padding: 6, width: 200, zIndex: 9999,
-                boxShadow: "0 8px 32px rgba(0,0,0,0.7)",
-              }}>
-                <button onClick={() => { handleShare(); setMenuOpen(false) }}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "none", borderRadius: 8, background: "none", cursor: "pointer", color: shareOk ? "#4ade80" : "rgba(255,255,255,0.65)", fontSize: 13 }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)" }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "none" }}
-                >
-                  {shareOk ? <Check size={14} /> : <Share2 size={14} />}
-                  {shareOk ? "Link copied!" : "Copy share link"}
-                </button>
-
-                <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }} />
-
-                <button onClick={() => { handleExport(); setMenuOpen(false) }}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "none", borderRadius: 8, background: "none", cursor: "pointer", color: exportOk ? "#4ade80" : "rgba(255,255,255,0.65)", fontSize: 13 }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)" }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "none" }}
-                >
-                  {exportOk ? <Check size={14} /> : <Download size={14} />}
-                  {exportOk ? "Exported!" : "Export as JSON"}
-                </button>
-
-                <button onClick={() => { importRef.current?.click(); setMenuOpen(false) }}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "none", borderRadius: 8, background: "none", cursor: "pointer", color: "rgba(255,255,255,0.65)", fontSize: 13 }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)" }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "none" }}
-                >
-                  <Upload size={14} />
-                  Import from JSON
-                </button>
-                <input ref={importRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={handleImport} />
-
-                {onHistoryToggle && (
-                  <>
-                    <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }} />
-                    <button onClick={() => { onHistoryToggle(); setMenuOpen(false) }}
-                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: "none", borderRadius: 8, background: "none", cursor: "pointer", color: "rgba(255,255,255,0.65)", fontSize: 13 }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)" }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = "none" }}
-                    >
-                      <History size={14} />
-                      Run History
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
+          {/* History toggle */}
+          <button
+            onClick={onHistoryToggle}
+            style={{
+              ...pillStyle,
+              background: showHistory ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.6)",
+              border: `1px solid ${showHistory ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.09)"}`,
+              color: showHistory ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.5)",
+            }}
+          >
+            <History size={13} />
+            History
+          </button>
 
           {/* Run All */}
           <button
@@ -493,29 +521,46 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
         </div>
       </Panel>
 
-      {/* ── BOTTOM LEFT: undo/redo ── */}
+      {/* ── BOTTOM LEFT: Undo/Redo + Keyboard shortcuts ── */}
       <Panel position="bottom-left" style={{ margin: "0 0 16px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Undo / Redo */}
           <div style={{
             display: "flex", alignItems: "center",
             background: "#141414", border: "1px solid rgba(255,255,255,0.08)",
             borderRadius: 12, padding: "4px",
           }}>
-            <Tip label="Undo">
-              <ToolBtn isActive={false} onClick={handleUndo} disabled={past.length === 0} title="Undo">
+            <Tip label="Undo" shortcut="Ctrl+Z">
+              <ToolBtn isActive={false} onClick={handleUndo} disabled={past.length === 0}>
                 <Undo2 size={13} />
               </ToolBtn>
             </Tip>
-            <Tip label="Redo">
-              <ToolBtn isActive={false} onClick={handleRedo} disabled={future.length === 0} title="Redo">
+            <Tip label="Redo" shortcut="Ctrl+Shift+Z">
+              <ToolBtn isActive={false} onClick={handleRedo} disabled={future.length === 0}>
                 <Redo2 size={13} />
               </ToolBtn>
             </Tip>
           </div>
+
+          {/* Keyboard shortcuts button */}
+          <button
+            onClick={() => setShortcutsOpen(true)}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: "#141414", border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 10, padding: "0 12px", height: 40,
+              color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.color = "rgba(255,255,255,0.7)" }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "#141414"; e.currentTarget.style.color = "rgba(255,255,255,0.4)" }}
+          >
+            <Keyboard size={13} />
+            Keyboard shortcuts
+          </button>
         </div>
       </Panel>
 
-      {/* ── BOTTOM CENTER: main toolbar ── */}
+      {/* ── BOTTOM CENTER: Main toolbar ── */}
       <Panel position="bottom-center" style={{ margin: "0 0 16px 0" }}>
         <div style={{
           display: "flex", alignItems: "center",
@@ -524,7 +569,7 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
           boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
         }}>
           {/* + Add node */}
-          <Tip label="New Node">
+          <Tip label="Add Node">
             <div style={{ position: "relative" }}>
               <ToolBtn isActive={addOpen} onClick={() => { setAddOpen(!addOpen); setPresetsOpen(false) }}>
                 <Plus size={16} />
@@ -536,7 +581,7 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
           {tools.map((t) => {
             const Icon = t.icon
             return (
-              <Tip key={t.id} label={t.label}>
+              <Tip key={t.id} label={t.label} shortcut={t.shortcut}>
                 <ToolBtn isActive={activeTool === t.id} onClick={() => setActiveTool(t.id as any)}>
                   <Icon size={15} />
                 </ToolBtn>
@@ -544,8 +589,8 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
             )
           })}
 
-          {/* Presets */}
-          <Tip label="Presets / Templates">
+          {/* Presets / Templates */}
+          <Tip label="Templates">
             <div style={{ position: "relative" }}>
               <ToolBtn isActive={presetsOpen} onClick={() => { setPresetsOpen(!presetsOpen); setAddOpen(false) }}>
                 <NodesIcon />
@@ -556,13 +601,14 @@ export default function CanvasToolbar({ onHistoryToggle }: { onHistoryToggle?: (
         </div>
       </Panel>
 
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }
+      {/* Keyboard shortcuts modal */}
+      <KeyboardShortcutsModal isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
         .cut-mode .react-flow__edge:hover .react-flow__edge-path {
           stroke: #f43f5e !important;
           stroke-width: 3 !important;
-          cursor: crosshair !important;
-        }
-        .cut-mode .react-flow__edge:hover {
           cursor: crosshair !important;
         }
       `}</style>
