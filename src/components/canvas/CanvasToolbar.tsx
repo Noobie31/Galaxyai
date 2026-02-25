@@ -277,7 +277,8 @@ export default function CanvasToolbar({
   }
 
   const handleUndo = () => {
-    const entry = undo()
+    const { nodes, edges } = useWorkflowStore.getState()
+    const entry = undo({ nodes, edges })
     if (entry) {
       useWorkflowStore.getState().setNodes(entry.nodes)
       useWorkflowStore.getState().setEdges(entry.edges)
@@ -285,7 +286,8 @@ export default function CanvasToolbar({
   }
 
   const handleRedo = () => {
-    const entry = redo()
+    const { nodes, edges } = useWorkflowStore.getState()
+    const entry = redo({ nodes, edges })
     if (entry) {
       useWorkflowStore.getState().setNodes(entry.nodes)
       useWorkflowStore.getState().setEdges(entry.edges)
