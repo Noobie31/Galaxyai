@@ -1,12 +1,12 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { useUser, useClerk } from "@clerk/nextjs"
 import {
   Plus, Search, ChevronDown,
   Home, ImageIcon, Video, Pen, Type, Folder,
-  Clock, ExternalLink, Pencil, Trash2, LogOut, User,
+  Clock, ExternalLink, Pencil, Copy, Trash2, LogOut, User, Check,
 } from "lucide-react"
 
 interface Workflow {
@@ -24,6 +24,9 @@ interface Props {
   userId?: string
 }
 
+type SortBy = "lastViewed" | "dateCreated" | "alphabetical"
+type OrderBy = "newest" | "oldest"
+
 export default function DashboardClient({ workflows: initialWorkflows = [], userId }: Props) {
   const router = useRouter()
   const { user } = useUser()
@@ -33,6 +36,12 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
   const [activeTab, setActiveTab] = useState("Projects")
   const [searchQuery, setSearchQuery] = useState("")
   const [isCreating, setIsCreating] = useState(false)
+  const [isLoadingSample, setIsLoadingSample] = useState(false)
+
+  // Sort state
+  const [sortBy, setSortBy] = useState<SortBy>("lastViewed")
+  const [orderBy, setOrderBy] = useState<OrderBy>("newest")
+  const [sortDropdownOpen, setSortDropdownOpen] = useState(false)
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; workflow: Workflow } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -41,30 +50,28 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
 
   const contextRef = useRef<HTMLDivElement>(null)
   const userMenuRef = useRef<HTMLDivElement>(null)
+  const sortDropdownRef = useRef<HTMLDivElement>(null)
 
   const tabs = ["Projects", "Apps", "Examples", "Templates"]
 
-  useEffect(() => { fetchWorkflows() }, [])
-
-  // Close menus on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (contextRef.current && !contextRef.current.contains(e.target as Node)) setContextMenu(null)
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) setUserMenuOpen(false)
-    }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [])
-
-  // Always dark
   const bg = "#0a0a0a"
-  const cardBg = "rgba(255,255,255,0.02)"
-  const cardBorder = "rgba(255,255,255,0.06)"
   const navBg = "rgba(10,10,10,0.96)"
   const navBorder = "rgba(255,255,255,0.06)"
   const textPrimary = "white"
   const textSecondary = "rgba(255,255,255,0.45)"
   const textMuted = "rgba(255,255,255,0.25)"
+
+  useEffect(() => { fetchWorkflows() }, [])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (contextRef.current && !contextRef.current.contains(e.target as Node)) setContextMenu(null)
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) setUserMenuOpen(false)
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(e.target as Node)) setSortDropdownOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [])
 
   const fetchWorkflows = async () => {
     try {
@@ -95,6 +102,7 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
   }
 
   const loadSampleWorkflow = async () => {
+    setIsLoadingSample(true)
     try {
       const res = await fetch("/api/workflows/sample", { method: "POST" })
       if (!res.ok) {
@@ -105,6 +113,8 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
       router.push(`/workflow/${(await res.json()).id}`)
     } catch (e: any) {
       alert(`Network error: ${e.message}`)
+    } finally {
+      setIsLoadingSample(false)
     }
   }
 
@@ -112,6 +122,18 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
     try {
       await fetch(`/api/workflows/${id}`, { method: "DELETE" })
       setWorkflows((prev) => prev.filter((w) => w.id !== id))
+    } catch (e) { console.error(e) }
+    setContextMenu(null)
+  }
+
+  const duplicateWorkflow = async (wf: Workflow) => {
+    try {
+      const res = await fetch("/api/workflows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: `${wf.name} (copy)`, nodes: wf.nodes, edges: wf.edges }),
+      })
+      if (res.ok) fetchWorkflows()
     } catch (e) { console.error(e) }
     setContextMenu(null)
   }
@@ -128,9 +150,22 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
     setRenamingId(null)
   }
 
-  const filteredWorkflows = workflows.filter((w) =>
-    w.name.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  // ── Sort + filter ──
+  const sortedWorkflows = useMemo(() => {
+    const filtered = workflows.filter((w) =>
+      w.name.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+    return [...filtered].sort((a, b) => {
+      if (sortBy === "alphabetical") {
+        const cmp = a.name.localeCompare(b.name)
+        return orderBy === "oldest" ? -cmp : cmp
+      }
+      const dateKey = sortBy === "dateCreated" ? "createdAt" : "updatedAt"
+      const aTime = new Date((a as any)[dateKey] ?? a.updatedAt).getTime()
+      const bTime = new Date((b as any)[dateKey] ?? b.updatedAt).getTime()
+      return orderBy === "newest" ? bTime - aTime : aTime - bTime
+    })
+  }, [workflows, searchQuery, sortBy, orderBy])
 
   const formatTime = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime()
@@ -142,6 +177,8 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
     return `Edited ${Math.floor(hrs / 24)}d ago`
   }
 
+  const sortLabel = sortBy === "lastViewed" ? "Last viewed" : sortBy === "dateCreated" ? "Date created" : "Alphabetical"
+
   const userInitial = user?.firstName?.[0] || user?.emailAddresses?.[0]?.emailAddress?.[0]?.toUpperCase() || "U"
   const userEmail = user?.emailAddresses?.[0]?.emailAddress || ""
   const userName = user?.fullName || user?.firstName || "User"
@@ -149,7 +186,7 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
   return (
     <div
       style={{ minHeight: "100vh", background: bg, color: textPrimary, fontFamily: "system-ui, -apple-system, sans-serif" }}
-      onClick={() => setContextMenu(null)}
+      onClick={() => { setContextMenu(null); setSortDropdownOpen(false) }}
     >
       {/* ── TOP NAV ── */}
       <nav style={{
@@ -161,22 +198,18 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
         backdropFilter: "blur(12px)",
         borderBottom: `1px solid ${navBorder}`,
       }}>
-        {/* Left: Logo */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 120 }}>
           <div style={{
-            width: 28, height: 28,
-            background: "white",
+            width: 28, height: 28, background: "white",
             borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
           }}>
             <span style={{ color: "black", fontWeight: 900, fontSize: 13 }}>N</span>
           </div>
         </div>
 
-        {/* Center: icon tabs */}
         <div style={{
           display: "flex", alignItems: "center", gap: 1,
-          background: "rgba(255,255,255,0.05)",
-          borderRadius: 12, padding: "3px",
+          background: "rgba(255,255,255,0.05)", borderRadius: 12, padding: "3px",
           border: `1px solid rgba(255,255,255,0.07)`,
         }}>
           {[
@@ -201,10 +234,8 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
           ))}
         </div>
 
-        {/* Right */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 120, justifyContent: "flex-end" }}>
           <NavBtn><Search size={15} /></NavBtn>
-
           <button style={{
             display: "flex", alignItems: "center", gap: 5,
             background: "#2563eb", border: "none", borderRadius: 8,
@@ -214,7 +245,6 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
             ↑ Upgrade Now
           </button>
 
-          {/* User avatar with dropdown */}
           <div ref={userMenuRef} style={{ position: "relative" }}>
             <button
               onClick={(e) => { e.stopPropagation(); setUserMenuOpen((v) => !v) }}
@@ -232,8 +262,7 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
             {userMenuOpen && (
               <div style={{
                 position: "absolute", top: "calc(100% + 8px)", right: 0,
-                background: "#1a1a1a",
-                border: `1px solid rgba(255,255,255,0.12)`,
+                background: "#1a1a1a", border: `1px solid rgba(255,255,255,0.12)`,
                 borderRadius: 12, padding: 6, minWidth: 220,
                 boxShadow: "0 8px 32px rgba(0,0,0,0.5)", zIndex: 200,
               }}>
@@ -253,39 +282,28 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
                     </div>
                   </div>
                 </div>
-
-                {[
-                  { icon: <User size={13} />, label: "Profile", onClick: () => setUserMenuOpen(false) },
-                ].map((item) => (
-                  <button key={item.label} onClick={item.onClick} style={{
-                    width: "100%", display: "flex", alignItems: "center", gap: 9,
-                    padding: "8px 10px", border: "none", borderRadius: 7,
-                    background: "none", cursor: "pointer",
-                    color: textSecondary, fontSize: 13,
-                  }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-                  >
-                    {item.icon}
-                    {item.label}
-                  </button>
-                ))}
-
+                <button onClick={() => setUserMenuOpen(false)} style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 9,
+                  padding: "8px 10px", border: "none", borderRadius: 7,
+                  background: "none", cursor: "pointer", color: textSecondary, fontSize: 13,
+                }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                >
+                  <User size={13} /> Profile
+                </button>
                 <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "3px 0" }} />
-
                 <button
                   onClick={() => signOut({ redirectUrl: "/sign-in" })}
                   style={{
                     width: "100%", display: "flex", alignItems: "center", gap: 9,
                     padding: "8px 10px", border: "none", borderRadius: 7,
-                    background: "none", cursor: "pointer",
-                    color: "#f87171", fontSize: 13,
+                    background: "none", cursor: "pointer", color: "#f87171", fontSize: 13,
                   }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(248,113,113,0.08)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
                 >
-                  <LogOut size={13} />
-                  Sign out
+                  <LogOut size={13} /> Sign out
                 </button>
               </div>
             )}
@@ -293,7 +311,6 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
         </div>
       </nav>
 
-      {/* ── PAGE CONTENT ── */}
       <div style={{ paddingTop: 52 }}>
         {/* Hero Banner */}
         <div style={{ padding: "20px 60px 0" }}>
@@ -311,8 +328,7 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
               background: "linear-gradient(to right, rgba(0,0,0,0.9) 30%, rgba(0,0,0,0.2) 70%, rgba(0,0,0,0.05) 100%)",
             }} />
             <div style={{
-              position: "relative", zIndex: 1,
-              padding: "28px 32px", height: "100%",
+              position: "relative", zIndex: 1, padding: "28px 32px", height: "100%",
               display: "flex", flexDirection: "column", gap: 10, boxSizing: "border-box",
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -327,9 +343,7 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
                     <path d="M9 7h6M7 9v6M17 9v6M9 17h6" />
                   </svg>
                 </div>
-                <h1 style={{ fontSize: 22, fontWeight: 700, color: "white", margin: 0, letterSpacing: "-0.01em" }}>
-                  Nodes
-                </h1>
+                <h1 style={{ fontSize: 22, fontWeight: 700, color: "white", margin: 0, letterSpacing: "-0.01em" }}>Nodes</h1>
               </div>
               <p style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", maxWidth: 300, lineHeight: 1.65, margin: 0 }}>
                 Nodes is the most powerful way to operate NextFlow. Connect every tool and model into complex automated pipelines.
@@ -349,7 +363,7 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
           </div>
         </div>
 
-        {/* Tabs + Search row */}
+        {/* ── Tabs + Search + Sort ── */}
         <div style={{ padding: "20px 60px 0" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ display: "flex" }}>
@@ -366,8 +380,12 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {/* Search */}
               <div style={{ position: "relative" }}>
-                <Search size={12} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: textMuted, pointerEvents: "none" }} />
+                <Search size={12} style={{
+                  position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)",
+                  color: textMuted, pointerEvents: "none",
+                }} />
                 <input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -381,15 +399,117 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
                   }}
                 />
               </div>
-              <button style={{
-                display: "flex", alignItems: "center", gap: 5,
-                background: "rgba(255,255,255,0.05)",
-                border: `1px solid rgba(255,255,255,0.08)`,
-                borderRadius: 8, padding: "6px 12px",
-                color: textSecondary, fontSize: 13, cursor: "pointer",
-              }}>
-                Last viewed <ChevronDown size={12} />
-              </button>
+
+              {/* ── Sort / Order dropdown ── */}
+              <div
+                ref={sortDropdownRef}
+                style={{ position: "relative" }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  onClick={() => setSortDropdownOpen((v) => !v)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    background: sortDropdownOpen ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.05)",
+                    border: `1px solid ${sortDropdownOpen ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)"}`,
+                    borderRadius: 8, padding: "6px 12px",
+                    color: sortDropdownOpen ? "white" : textSecondary,
+                    fontSize: 13, cursor: "pointer", transition: "all 0.15s",
+                  }}
+                >
+                  {sortLabel}
+                  <ChevronDown
+                    size={13}
+                    style={{
+                      transform: sortDropdownOpen ? "rotate(180deg)" : "rotate(0)",
+                      transition: "transform 0.2s",
+                      opacity: 0.55,
+                    }}
+                  />
+                </button>
+
+                {sortDropdownOpen && (
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 6px)", right: 0,
+                    background: "#161616",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: 12, padding: "5px",
+                    minWidth: 186, zIndex: 500,
+                    boxShadow: "0 12px 40px rgba(0,0,0,0.7)",
+                  }}>
+                    {/* Sort by section */}
+                    <p style={{
+                      fontSize: 10, fontWeight: 600,
+                      color: "rgba(255,255,255,0.22)",
+                      textTransform: "uppercase", letterSpacing: "0.09em",
+                      margin: 0, padding: "5px 10px 5px",
+                    }}>
+                      Sort by
+                    </p>
+                    {([
+                      { value: "lastViewed" as SortBy, label: "Last viewed" },
+                      { value: "dateCreated" as SortBy, label: "Date created" },
+                      { value: "alphabetical" as SortBy, label: "Alphabetical" },
+                    ]).map((item) => (
+                      <button
+                        key={item.value}
+                        onClick={() => setSortBy(item.value)}
+                        style={{
+                          width: "100%", display: "flex", alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "7px 10px", border: "none", borderRadius: 7,
+                          background: "none", cursor: "pointer",
+                          color: sortBy === item.value ? "white" : "rgba(255,255,255,0.5)",
+                          fontSize: 13, fontWeight: sortBy === item.value ? 500 : 400,
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                      >
+                        {item.label}
+                        {sortBy === item.value && (
+                          <Check size={12} style={{ color: "white", flexShrink: 0 }} />
+                        )}
+                      </button>
+                    ))}
+
+                    <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "4px 0" }} />
+
+                    {/* Order by section */}
+                    <p style={{
+                      fontSize: 10, fontWeight: 600,
+                      color: "rgba(255,255,255,0.22)",
+                      textTransform: "uppercase", letterSpacing: "0.09em",
+                      margin: 0, padding: "5px 10px 5px",
+                    }}>
+                      Order by
+                    </p>
+                    {([
+                      { value: "newest" as OrderBy, label: "Newest first" },
+                      { value: "oldest" as OrderBy, label: "Oldest first" },
+                    ]).map((item) => (
+                      <button
+                        key={item.value}
+                        onClick={() => setOrderBy(item.value)}
+                        style={{
+                          width: "100%", display: "flex", alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "7px 10px", border: "none", borderRadius: 7,
+                          background: "none", cursor: "pointer",
+                          color: orderBy === item.value ? "white" : "rgba(255,255,255,0.5)",
+                          fontSize: 13, fontWeight: orderBy === item.value ? 500 : 400,
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+                      >
+                        {item.label}
+                        {orderBy === item.value && (
+                          <Check size={12} style={{ color: "white", flexShrink: 0 }} />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginTop: 0 }} />
@@ -400,10 +520,12 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
           {activeTab === "Templates" ? (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 }}>
               <TemplateCard
-                name="Product Marketing Kit"
-                description="Upload a product photo and generate professional marketing copy with AI"
+                name="Product Marketing Kit Generator"
+                description="All 6 node types in one workflow. Two parallel branches (image crop + video frame extraction) converge at a final LLM node to generate marketing copy."
                 nodeCount={9}
+                tags={["Parallel", "Multi-modal", "LLM"]}
                 onClick={loadSampleWorkflow}
+                isLoading={isLoadingSample}
                 textPrimary={textPrimary}
                 textSecondary={textSecondary}
               />
@@ -411,7 +533,7 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
           ) : activeTab === "Projects" ? (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 }}>
               <WorkflowCard isNew onClick={createWorkflow} isCreating={isCreating} textPrimary={textPrimary} textSecondary={textSecondary} textMuted={textMuted} />
-              {filteredWorkflows.map((wf) => (
+              {sortedWorkflows.map((wf) => (
                 <WorkflowCard
                   key={wf.id} workflow={wf}
                   isRenaming={renamingId === wf.id}
@@ -434,18 +556,18 @@ export default function DashboardClient({ workflows: initialWorkflows = [], user
         </div>
       </div>
 
-      {/* Context Menu — Duplicate removed */}
+      {/* Context Menu */}
       {contextMenu && (
         <div ref={contextRef} onClick={(e) => e.stopPropagation()} style={{
           position: "fixed", top: contextMenu.y, left: contextMenu.x,
-          background: "#1a1a1a",
-          border: `1px solid rgba(255,255,255,0.1)`,
+          background: "#1a1a1a", border: `1px solid rgba(255,255,255,0.1)`,
           borderRadius: 10, padding: 4, zIndex: 1000, minWidth: 160,
           boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
         }}>
           {[
             { icon: <ExternalLink size={13} />, label: "Open", onClick: () => { router.push(`/workflow/${contextMenu.workflow.id}`); setContextMenu(null) }, danger: false },
             { icon: <Pencil size={13} />, label: "Rename", onClick: () => { setRenamingId(contextMenu.workflow.id); setRenameValue(contextMenu.workflow.name); setContextMenu(null) }, danger: false },
+            { icon: <Copy size={13} />, label: "Duplicate", onClick: () => duplicateWorkflow(contextMenu.workflow), danger: false },
             null,
             { icon: <Trash2 size={13} />, label: "Delete", onClick: () => deleteWorkflow(contextMenu.workflow.id), danger: true },
           ].map((item, i) =>
@@ -505,8 +627,7 @@ function NavIconBtn({ icon, label, active, textSecondary }: any) {
       {show && (
         <div style={{
           position: "absolute", top: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
-          background: "#1e1e1e",
-          border: `1px solid rgba(255,255,255,0.1)`,
+          background: "#1e1e1e", border: `1px solid rgba(255,255,255,0.1)`,
           borderRadius: 6, padding: "4px 8px",
           fontSize: 11, color: "rgba(255,255,255,0.8)",
           whiteSpace: "nowrap", pointerEvents: "none", zIndex: 200,
@@ -521,13 +642,14 @@ function NavIconBtn({ icon, label, active, textSecondary }: any) {
 
 function WorkflowCard({ isNew, onClick, onContextMenu, isCreating, workflow, isRenaming, renameValue, onRenameChange, onRenameSubmit, formatTime, textPrimary, textSecondary, textMuted }: any) {
   const [hovered, setHovered] = useState(false)
-  const bg = hovered ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.02)"
-  const border = hovered ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)"
-
   return (
     <div onClick={onClick} onContextMenu={onContextMenu}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-      style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, cursor: "pointer", overflow: "hidden", transition: "all 0.15s" }}
+      style={{
+        background: hovered ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.02)",
+        border: `1px solid ${hovered ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)"}`,
+        borderRadius: 12, cursor: "pointer", overflow: "hidden", transition: "all 0.15s",
+      }}
     >
       <div style={{
         height: 140,
@@ -594,51 +716,98 @@ function WorkflowThumbnail({ nodes, edges }: { nodes?: any[]; edges?: any[] }) {
     <svg width="120" height="80" viewBox="0 0 120 80">
       {edges?.slice(0, 3).map((e: any, i: number) => (
         <line key={i} x1={20 + i * 18} y1={40} x2={58 + i * 18} y2={40}
-          stroke="rgba(234,179,8,0.45)" strokeWidth="1.5" />
+          stroke="rgba(168,85,247,0.45)" strokeWidth="1.5" />
       ))}
       {nodes?.slice(0, 4).map((n: any, i: number) => (
         <rect key={i}
           x={8 + (i % 2) * 62} y={14 + Math.floor(i / 2) * 36}
           width={46} height={26} rx={4}
-          fill="rgba(255,255,255,0.07)"
-          stroke="rgba(255,255,255,0.12)" strokeWidth="1"
+          fill="rgba(255,255,255,0.07)" stroke="rgba(255,255,255,0.12)" strokeWidth="1"
         />
       ))}
     </svg>
   )
 }
 
-function TemplateCard({ name, description, nodeCount, onClick, textPrimary, textSecondary }: any) {
+function TemplateCard({ name, description, nodeCount, tags, onClick, isLoading, textPrimary, textSecondary }: any) {
   const [hovered, setHovered] = useState(false)
   return (
-    <div onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+    <div
+      onClick={!isLoading ? onClick : undefined}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         background: hovered ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)",
         border: `1px solid ${hovered ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.06)"}`,
-        borderRadius: 12, cursor: "pointer", overflow: "hidden", transition: "all 0.15s",
+        borderRadius: 12, cursor: isLoading ? "not-allowed" : "pointer",
+        overflow: "hidden", transition: "all 0.15s", opacity: isLoading ? 0.7 : 1,
       }}
     >
       <div style={{
-        height: 110,
+        height: 120,
         background: "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(168,85,247,0.12))",
         display: "flex", alignItems: "center", justifyContent: "center",
         borderBottom: `1px solid rgba(255,255,255,0.05)`,
+        position: "relative", overflow: "hidden",
       }}>
-        <svg width="80" height="50" viewBox="0 0 80 50">
-          <rect x="2" y="6" width="28" height="16" rx="3" fill="rgba(255,255,255,0.1)" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
-          <rect x="50" y="2" width="28" height="16" rx="3" fill="rgba(255,255,255,0.1)" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
-          <rect x="50" y="28" width="28" height="16" rx="3" fill="rgba(255,255,255,0.1)" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
-          <line x1="30" y1="14" x2="50" y2="10" stroke="rgba(234,179,8,0.5)" strokeWidth="1.5" />
-          <line x1="30" y1="14" x2="50" y2="36" stroke="rgba(234,179,8,0.5)" strokeWidth="1.5" />
+        <svg width="160" height="90" viewBox="0 0 160 90">
+          <rect x="4" y="8" width="30" height="16" rx="3" fill="rgba(14,165,233,0.25)" stroke="rgba(14,165,233,0.5)" strokeWidth="1" />
+          <rect x="44" y="8" width="30" height="16" rx="3" fill="rgba(234,179,8,0.25)" stroke="rgba(234,179,8,0.5)" strokeWidth="1" />
+          <rect x="84" y="8" width="30" height="16" rx="3" fill="rgba(99,102,241,0.25)" stroke="rgba(99,102,241,0.5)" strokeWidth="1" />
+          <rect x="4" y="52" width="30" height="16" rx="3" fill="rgba(245,158,11,0.25)" stroke="rgba(245,158,11,0.5)" strokeWidth="1" />
+          <rect x="44" y="52" width="30" height="16" rx="3" fill="rgba(244,63,94,0.25)" stroke="rgba(244,63,94,0.5)" strokeWidth="1" />
+          <rect x="124" y="30" width="32" height="30" rx="4" fill="rgba(168,85,247,0.3)" stroke="rgba(168,85,247,0.7)" strokeWidth="1.5" />
+          <path d="M34 16 L44 16" stroke="rgba(168,85,247,0.6)" strokeWidth="1.2" fill="none" />
+          <path d="M74 16 L84 16" stroke="rgba(168,85,247,0.6)" strokeWidth="1.2" fill="none" />
+          <path d="M114 16 L140 30" stroke="rgba(168,85,247,0.6)" strokeWidth="1.2" fill="none" />
+          <path d="M34 60 L44 60" stroke="rgba(168,85,247,0.6)" strokeWidth="1.2" fill="none" />
+          <path d="M74 60 L140 60" stroke="rgba(168,85,247,0.6)" strokeWidth="1.2" fill="none" />
+          <text x="19" y="20" fontSize="4" fill="rgba(255,255,255,0.5)" textAnchor="middle">IMG</text>
+          <text x="59" y="20" fontSize="4" fill="rgba(255,255,255,0.5)" textAnchor="middle">CROP</text>
+          <text x="99" y="20" fontSize="4" fill="rgba(255,255,255,0.5)" textAnchor="middle">LLM</text>
+          <text x="19" y="64" fontSize="4" fill="rgba(255,255,255,0.5)" textAnchor="middle">VID</text>
+          <text x="59" y="64" fontSize="4" fill="rgba(255,255,255,0.5)" textAnchor="middle">FRAME</text>
+          <text x="140" y="48" fontSize="5" fill="rgba(255,255,255,0.7)" textAnchor="middle">LLM</text>
+          <text x="140" y="54" fontSize="3.5" fill="rgba(168,85,247,0.8)" textAnchor="middle">#2</text>
         </svg>
+        <div style={{
+          position: "absolute", top: 8, right: 8,
+          background: "rgba(168,85,247,0.2)", border: "1px solid rgba(168,85,247,0.4)",
+          borderRadius: 4, padding: "2px 6px",
+          fontSize: 9, fontWeight: 700, color: "rgba(168,85,247,0.9)", letterSpacing: "0.05em",
+        }}>
+          PARALLEL
+        </div>
       </div>
       <div style={{ padding: "12px 14px" }}>
-        <p style={{ fontSize: 14, fontWeight: 600, color: textPrimary, margin: "0 0 5px" }}>{name}</p>
-        <p style={{ fontSize: 12, color: textSecondary, margin: "0 0 10px", lineHeight: 1.5 }}>{description}</p>
-        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.05)", padding: "2px 7px", borderRadius: 5 }}>
-          {nodeCount} nodes
-        </span>
+        <p style={{ fontSize: 13, fontWeight: 600, color: textPrimary, margin: "0 0 6px" }}>{name}</p>
+        <p style={{ fontSize: 11, color: textSecondary, margin: "0 0 10px", lineHeight: 1.6 }}>{description}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.05)", padding: "2px 7px", borderRadius: 5 }}>
+            {nodeCount} nodes
+          </span>
+          {tags?.map((tag: string) => (
+            <span key={tag} style={{
+              fontSize: 10, color: "rgba(168,85,247,0.7)",
+              background: "rgba(168,85,247,0.08)", border: "1px solid rgba(168,85,247,0.2)",
+              padding: "2px 7px", borderRadius: 5,
+            }}>
+              {tag}
+            </span>
+          ))}
+        </div>
+        {isLoading && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+            <div style={{
+              width: 10, height: 10, borderRadius: "50%",
+              border: "2px solid rgba(168,85,247,0.3)", borderTop: "2px solid rgba(168,85,247,0.8)",
+              animation: "spin 0.7s linear infinite",
+            }} />
+            <span style={{ fontSize: 11, color: "rgba(168,85,247,0.7)" }}>Loading workflow...</span>
+          </div>
+        )}
       </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }
