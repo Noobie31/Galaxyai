@@ -13,7 +13,7 @@ async function uploadToTransloadit(
   mimeType: string
 ): Promise<string> {
   const params = JSON.stringify({
-    auth: { key: process.env.TRANSLOADIT_KEY }
+    auth: { key: process.env.NEXT_PUBLIC_TRANSLOADIT_KEY },
     steps: { ":original": { robot: "/upload/handle" } },
   })
   const formData = new FormData()
