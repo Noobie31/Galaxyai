@@ -53,10 +53,11 @@ export function useKeyboardShortcuts() {
                 if (e.shiftKey && (e.key === "v" || e.key === "V")) spawnNode("videoUploadNode")
             }
 
-            // ── Undo / Redo ──
+           // ── Undo / Redo ──
             if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
                 e.preventDefault()
-                const entry = undo()
+                const { nodes, edges } = useWorkflowStore.getState()
+                const entry = undo({ nodes, edges })
                 if (entry) {
                     useWorkflowStore.getState().setNodes(entry.nodes)
                     useWorkflowStore.getState().setEdges(entry.edges)
@@ -64,13 +65,13 @@ export function useKeyboardShortcuts() {
             }
             if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
                 e.preventDefault()
-                const entry = redo()
+                const { nodes, edges } = useWorkflowStore.getState()
+                const entry = redo({ nodes, edges })
                 if (entry) {
                     useWorkflowStore.getState().setNodes(entry.nodes)
                     useWorkflowStore.getState().setEdges(entry.edges)
                 }
             }
-
             // ── Ctrl+0: fit view ──
             if ((e.ctrlKey || e.metaKey) && e.key === "0") {
                 e.preventDefault()
