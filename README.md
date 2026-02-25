@@ -4,6 +4,10 @@ Visual LLM Workflow Builder · Next.js 14 · React Flow · Trigger.dev · Gemini
 
 ---
 
+## Demo
+
+[▶ Watch Demo](https://drive.google.com/file/d/1PM7IcyYrXiTnjjoiA9OpZngEvdcF2AKe/view?usp=sharing)
+
 ## Table of Contents
 
 - [Project Overview](#project-overview)
