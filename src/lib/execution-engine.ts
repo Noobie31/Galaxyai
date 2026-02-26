@@ -112,7 +112,7 @@ function resolveNodeInputs(nodeId: string, nodes: any[], edges: any[]): Record<s
     }
 
     if (node.type === "llmNode") {
-        inputs.model = nodeData.model || "gemini-2.0-flash"
+        inputs.model = nodeData.model || "gemini-2.5-flash"
         if (!inputs.system_prompt && nodeData.systemPrompt) {
             inputs.system_prompt = nodeData.systemPrompt
         }

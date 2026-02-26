@@ -26,7 +26,7 @@ export async function POST(req: Request) {
       const { llmTask } = await import("@/trigger/llmTask")
 
       const handle = await tasks.trigger(llmTask.id, {
-        model: inputs.model || "gemini-2.0-flash",
+        model: inputs.model || "gemini-2.5-flash",
         systemPrompt: inputs.system_prompt,
         userMessage: inputs.user_message || inputs.text || "",
         imageUrls: Array.isArray(inputs.images)

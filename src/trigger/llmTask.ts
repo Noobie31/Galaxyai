@@ -11,7 +11,7 @@ export const llmTask = task({
     imageUrls?: string[]
   }) => {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
-    const model = genAI.getGenerativeModel({ model: payload.model || "gemini-2.0-flash" })
+    const model = genAI.getGenerativeModel({ model: payload.model || "gemini-2.5-flash" })
 
     const parts: any[] = []
 

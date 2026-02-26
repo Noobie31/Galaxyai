@@ -70,9 +70,9 @@ const SAMPLE_NODES = [
   { id: "video-1", type: "videoUploadNode", position: { x: 80, y: 600 }, data: { label: "Upload Video", status: "idle" } },
   { id: "crop-1", type: "cropImageNode", position: { x: 480, y: 420 }, data: { label: "Crop Image", xPercent: 10, yPercent: 10, widthPercent: 80, heightPercent: 80, connectedHandles: ["image_url"], status: "idle" } },
   { id: "extract-1", type: "extractFrameNode", position: { x: 480, y: 600 }, data: { label: "Extract Frame", timestamp: "50%", connectedHandles: ["video_url"], status: "idle" } },
-  { id: "llm-1", type: "llmNode", position: { x: 880, y: 200 }, data: { label: "LLM - Product Description", model: "gemini-2.0-flash", connectedHandles: ["system_prompt", "user_message", "images"], status: "idle" } },
+  { id: "llm-1", type: "llmNode", position: { x: 880, y: 200 }, data: { label: "LLM - Product Description", model: "gemini-2.5-flash", connectedHandles: ["system_prompt", "user_message", "images"], status: "idle" } },
   { id: "text-3", type: "textNode", position: { x: 880, y: 80 }, data: { label: "Text", text: "You are a social media manager. Create a tweet-length marketing post based on the product image and video frame.", status: "idle" } },
-  { id: "llm-2", type: "llmNode", position: { x: 1280, y: 400 }, data: { label: "LLM - Final Post", model: "gemini-2.0-flash", connectedHandles: ["system_prompt", "user_message", "images"], status: "idle" } },
+  { id: "llm-2", type: "llmNode", position: { x: 1280, y: 400 }, data: { label: "LLM - Final Post", model: "gemini-2.5-flash", connectedHandles: ["system_prompt", "user_message", "images"], status: "idle" } },
 ]
 
 const SAMPLE_EDGES = [
@@ -304,7 +304,7 @@ export default function CanvasToolbar({
           textNode: { label: "Text", text: "", status: "idle" },
           imageUploadNode: { label: "Upload Image", status: "idle" },
           videoUploadNode: { label: "Upload Video", status: "idle" },
-          llmNode: { label: "Run Any LLM", model: "gemini-2.0-flash", status: "idle", connectedHandles: [] },
+          llmNode: { label: "Run Any LLM", model: "gemini-2.5-flash", status: "idle", connectedHandles: [] },
           cropImageNode: { label: "Crop Image", xPercent: 0, yPercent: 0, widthPercent: 100, heightPercent: 100, connectedHandles: [], status: "idle" },
           extractFrameNode: { label: "Extract Frame", timestamp: "0", connectedHandles: [], status: "idle" },
         }[type] || { label: type, status: "idle" }),
